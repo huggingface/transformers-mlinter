@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -590,6 +592,43 @@ class _LazyConfigMapping(OrderedDict[str, str]):
         file_path = Path("src/transformers/models/auto/configuration_auto.py")
         violations = mlinter.analyze_file(file_path, source)
         self.assertEqual(violations, [])
+
+    def test_cache_path_uses_xdg_cache_home_on_linux(self):
+        with patch.object(mlinter.sys, "platform", "linux"), patch.dict(
+            mlinter.os.environ, {"XDG_CACHE_HOME": "/tmp/mlinter-xdg-cache"}, clear=True
+        ):
+            self.assertEqual(
+                mlinter._cache_path(),
+                Path("/tmp/mlinter-xdg-cache") / "mlinter" / mlinter.CACHE_FILENAME,
+            )
+
+    def test_cache_path_uses_library_caches_on_macos(self):
+        with patch.object(mlinter.sys, "platform", "darwin"), patch.object(
+            mlinter.Path, "home", return_value=Path("/Users/tester")
+        ):
+            self.assertEqual(
+                mlinter._cache_path(),
+                Path("/Users/tester") / "Library" / "Caches" / "mlinter" / mlinter.CACHE_FILENAME,
+            )
+
+    def test_cache_path_uses_localappdata_on_windows(self):
+        with patch.object(mlinter.sys, "platform", "win32"), patch.dict(
+            mlinter.os.environ, {"LOCALAPPDATA": "/tmp/localappdata"}, clear=True
+        ):
+            self.assertEqual(
+                mlinter._cache_path(),
+                Path("/tmp/localappdata") / "mlinter" / mlinter.CACHE_FILENAME,
+            )
+
+    def test_save_cache_creates_parent_directory(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_path = Path(tmp_dir) / "nested" / "mlinter" / mlinter.CACHE_FILENAME
+
+            with patch("mlinter.mlinter._cache_path", return_value=cache_path):
+                mlinter._save_cache({"foo.py": "digest"})
+
+            self.assertTrue(cache_path.exists())
+            self.assertEqual(json.loads(cache_path.read_text(encoding="utf-8")), {"foo.py": "digest"})
 
     @patch("mlinter.mlinter.subprocess.run")
     def test_get_changed_modeling_files_includes_configuration_files(self, mock_run):

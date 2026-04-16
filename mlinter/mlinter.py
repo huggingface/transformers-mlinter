@@ -17,6 +17,7 @@ import ast
 import hashlib
 import importlib
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -83,7 +84,7 @@ TRF_MODEL_DIR_ALLOWLISTS = {
     rule_id: spec["allowlist_models"] for rule_id, spec in TRF_RULE_SPECS.items() if spec["allowlist_models"]
 }
 CONSOLE = Console(stderr=True)
-CACHE_PATH = Path(__file__).with_name(".mlinter_cache.json")
+CACHE_FILENAME = ".mlinter_cache.json"
 
 
 def _is_rule_allowlisted_for_file(rule_id: str, file_path: Path) -> bool:
@@ -99,16 +100,38 @@ def _content_hash(text: str, enabled_rules: set[str]) -> str:
     return h.hexdigest()
 
 
+def _cache_dir() -> Path:
+    if sys.platform == "win32":
+        local_appdata = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if local_appdata:
+            return Path(local_appdata) / "mlinter"
+        return Path.home() / "AppData" / "Local" / "mlinter"
+
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "mlinter"
+
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache_home:
+        return Path(xdg_cache_home) / "mlinter"
+    return Path.home() / ".cache" / "mlinter"
+
+
+def _cache_path() -> Path:
+    return _cache_dir() / CACHE_FILENAME
+
+
 def _load_cache() -> dict[str, str]:
     try:
-        return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        return json.loads(_cache_path().read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
 
 
 def _save_cache(cache: dict[str, str]) -> None:
     try:
-        CACHE_PATH.write_text(json.dumps(cache, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        cache_path = _cache_path()
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(cache, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     except OSError:
         pass
 

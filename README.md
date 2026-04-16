@@ -1,11 +1,23 @@
 # mlinter
 
-Lint modeling, modular, and configuration files under `src/transformers/models` for structural conventions.
+A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers) modeling files. It enforces structural conventions on every `modeling_*.py`, `modular_*.py`, and `configuration_*.py` file under `src/transformers/models`.
+
+## Installation
+
+```bash
+pip install git+https://github.com/huggingface/transformers-mlinter@main
+```
+
+When working on the transformers repo, mlinter is included in the `quality` extras:
+
+```bash
+pip install -e ".[quality]"
+```
 
 ## How rule registration works
 
-- Rule metadata lives in `utils/mlinter/rules.toml`.
-- Executable TRF rules are auto-discovered from `trf*.py` modules in the `utils/mlinter/` package.
+- Rule metadata lives in `mlinter/rules.toml`.
+- Executable TRF rules are auto-discovered from `trf*.py` modules in the `mlinter/` package.
 - Each module must define a `check(tree, file_path, source_lines) -> list[Violation]` function.
 - The module name determines the rule id: `trf003.py` → `TRF003`.
 - A `RULE_ID` module-level constant is set automatically by the discovery mechanism.
@@ -14,33 +26,58 @@ Lint modeling, modular, and configuration files under `src/transformers/models` 
 
 ## How to add a new TRF rule
 
-1. Add a `[rules.TRFXXX]` entry to `utils/mlinter/rules.toml`.
+1. Add a `[rules.TRFXXX]` entry to `mlinter/rules.toml`.
 2. Fill in `description`, `default_enabled`, `explanation.what_it_does`, `explanation.why_bad`, `explanation.bad_example`, and `explanation.good_example`. Optional model-level exceptions go in `allowlist_models`.
-3. Create a new module `utils/mlinter/trfXXX.py` with a `check(tree, file_path, source_lines) -> list[Violation]` function.
+3. Create a new module `mlinter/trfXXX.py` with a `check(tree, file_path, source_lines) -> list[Violation]` function.
 4. Use the `RULE_ID` module constant instead of hardcoding `"TRFXXX"` inside the check.
-5. Add or update focused tests in `tests/repo_utils/test_check_modeling_structure.py`.
+5. Add or update focused tests in `tests/`.
 
 ## CLI usage
 
+Run from the root of a transformers checkout:
+
 ```bash
 # Check all modeling, modular, and configuration files
-python -m utils.mlinter
+mlinter
 
 # Only check files changed against a git base ref
-python -m utils.mlinter --changed-only --base-ref origin/main
+mlinter --changed-only --base-ref origin/main
 
 # List all available TRF rules and their default state
-python -m utils.mlinter --list-rules
+mlinter --list-rules
 
 # Show detailed documentation for one rule
-python -m utils.mlinter --rule TRF001
+mlinter --rule TRF001
 
 # Enable additional rules on top of the defaults
-python -m utils.mlinter --enable-rules TRF003
+mlinter --enable-rules TRF003
 
 # Enable every TRF rule, including ones disabled by default
-python -m utils.mlinter --enable-all-trf-rules
+mlinter --enable-all-trf-rules
 
 # Emit GitHub Actions error annotations
-python -m utils.mlinter --github-annotations
+mlinter --github-annotations
+```
+
+You can also invoke it as a Python module:
+
+```bash
+python -m mlinter
+```
+
+The lint cache is stored in the user cache directory instead of next to the installed package:
+`$XDG_CACHE_HOME/mlinter/.mlinter_cache.json` on Linux, `~/Library/Caches/mlinter/.mlinter_cache.json` on macOS, and `%LOCALAPPDATA%\mlinter\.mlinter_cache.json` on Windows.
+
+## Development
+
+```bash
+git clone https://github.com/huggingface/transformers-mlinter
+cd transformers-mlinter
+pip install -e ".[dev]"
+```
+
+Run the tests:
+
+```bash
+pytest tests/
 ```

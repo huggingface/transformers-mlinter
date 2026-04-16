@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mlinter"
+version = "0.1.0"
+description = "Lint modeling, modular, and configuration files for Hugging Face Transformers structural conventions."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "The Hugging Face Team", email = "transformers@huggingface.co" },
+]
+keywords = ["linter", "transformers", "huggingface", "ast", "modeling"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "rich",
+    "tomli; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "ty",
+]
+
+[project.scripts]
+mlinter = "mlinter.mlinter:main"
+
+[project.urls]
+Homepage = "https://github.com/huggingface/transformers-mlinter"
+Repository = "https://github.com/huggingface/transformers-mlinter"
+
+[tool.setuptools.packages.find]
+include = ["mlinter*"]
+
+[tool.setuptools.package-data]
+mlinter = ["rules.toml"]
+
+[tool.ty.environment]
+python-version = "3.10"
+python = ".venv"
+
+[tool.ty.rules]
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 119
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+known-first-party = ["mlinter"]

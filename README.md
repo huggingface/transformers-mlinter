@@ -27,7 +27,7 @@ pip install -e ".[quality]"
 ## How to add a new TRF rule
 
 1. Add a `[rules.TRFXXX]` entry to `mlinter/rules.toml`.
-2. Fill in `description`, `default_enabled`, `explanation.what_it_does`, `explanation.why_bad`, `explanation.bad_example`, and `explanation.good_example`. Optional model-level exceptions go in `allowlist_models`.
+2. Fill in `description`, `default_enabled`, `explanation.what_it_does`, `explanation.why_bad`, and `explanation.diff`. Optional model-level exceptions go in `allowlist_models`.
 3. Create a new module `mlinter/trfXXX.py` with a `check(tree, file_path, source_lines) -> list[Violation]` function.
 4. Use the `RULE_ID` module constant instead of hardcoding `"TRFXXX"` inside the check.
 5. Add or update focused tests in `tests/`.

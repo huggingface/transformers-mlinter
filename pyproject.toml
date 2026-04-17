@@ -38,7 +38,7 @@ dev = [
 ]
 
 [project.scripts]
-mlinter = "mlinter.mlinter:main"
+mlinter = "mlinter:main"
 
 [project.urls]
 Homepage = "https://github.com/huggingface/transformers-mlinter"

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .mlinter import main
+from . import main
 
 
 raise SystemExit(main())

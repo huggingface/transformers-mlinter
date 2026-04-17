@@ -68,6 +68,16 @@ python -m mlinter
 The lint cache is stored in the user cache directory instead of next to the installed package:
 `$XDG_CACHE_HOME/mlinter/.mlinter_cache.json` on Linux, `~/Library/Caches/mlinter/.mlinter_cache.json` on macOS, and `%LOCALAPPDATA%\mlinter\.mlinter_cache.json` on Windows.
 
+## Python API
+
+Import the supported Python API from the package root:
+
+```python
+from mlinter import TRF001, analyze_file, model_dir_name, render_rules_reference
+```
+
+`mlinter.mlinter` and `mlinter._helpers` are implementation modules and may change without a compatibility promise.
+
 ## Development
 
 ```bash

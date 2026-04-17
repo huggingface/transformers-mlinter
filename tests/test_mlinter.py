@@ -19,6 +19,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import mlinter as public_api
+from mlinter import _helpers as _helpers_mod
 from mlinter import mlinter
 from mlinter import trf011 as _trf011_mod
 
@@ -581,6 +583,37 @@ class FooModel(FooPreTrainedModel):
         self.assertEqual(trf013, [])
 
     # --- Utility tests ---
+
+    def test_package_root_reexports_supported_api(self):
+        self.assertIs(public_api.analyze_file, mlinter.analyze_file)
+        self.assertIs(public_api.format_rule_details, mlinter.format_rule_details)
+        self.assertIs(public_api.render_rules_reference, mlinter.render_rules_reference)
+        self.assertIs(public_api.Violation, _helpers_mod.Violation)
+        self.assertIs(public_api.collect_class_bases, _helpers_mod._collect_class_bases)
+        self.assertIs(public_api.has_rule_suppression, _helpers_mod._has_rule_suppression)
+        self.assertIs(public_api.inherits_pretrained_model, _helpers_mod._inherits_pretrained_model)
+        self.assertIs(public_api.model_dir_name, _helpers_mod._model_dir_name)
+        self.assertIs(public_api.is_rule_allowlisted_for_file, mlinter._is_rule_allowlisted_for_file)
+        self.assertEqual(public_api.TRF001, "TRF001")
+        self.assertEqual(public_api.TRF015, "TRF015")
+
+    def test_package_root_all_lists_supported_api(self):
+        self.assertIn("analyze_file", public_api.__all__)
+        self.assertIn("collect_class_bases", public_api.__all__)
+        self.assertIn("model_dir_name", public_api.__all__)
+        self.assertIn("render_rules_reference", public_api.__all__)
+        self.assertIn("TRF001", public_api.__all__)
+        self.assertIn("TRF015", public_api.__all__)
+        self.assertNotIn("_collect_class_bases", public_api.__all__)
+        self.assertNotIn("_rule_id", public_api.__all__)
+
+    def test_mlinter_module_does_not_leak_rule_loop_variable(self):
+        self.assertFalse(hasattr(mlinter, "_rule_id"))
+
+    def test_render_rules_reference_matches_rule_specs(self):
+        rendered = public_api.render_rules_reference()
+        self.assertEqual(rendered.count("### TRF"), len(public_api.TRF_RULE_SPECS))
+        self.assertTrue(rendered.endswith("\n"))
 
     def test_analyze_file_allows_subscripted_class_bases(self):
         source = """

@@ -260,6 +260,7 @@ TRF_RULE_CHECKS = _build_rule_checks()
 # Expose rule-id string constants (e.g. TRF001 == "TRF001") for test compatibility.
 for _rule_id in TRF_RULE_CHECKS:
     globals()[_rule_id] = _rule_id
+del _rule_id
 
 
 def analyze_file(file_path: Path, text: str, enabled_rules: set[str] | None = None) -> list[Violation]:
@@ -390,6 +391,10 @@ def format_rule_details(rule_id: str) -> str:
             "```",
         ]
     )
+
+
+def render_rules_reference() -> str:
+    return "\n\n".join(format_rule_details(rule_id) for rule_id in sorted(TRF_RULE_SPECS)) + "\n"
 
 
 def maybe_handle_rule_docs_cli(args: argparse.Namespace) -> bool:

@@ -38,6 +38,7 @@ from ._helpers import (
 from ._helpers import (
     _model_dir_name as model_dir_name,
 )
+from ._version import __version__
 from .mlinter import (
     DEFAULT_ENABLED_TRF_RULES,
     TRF_MODEL_DIR_ALLOWLISTS,
@@ -72,6 +73,7 @@ __all__ = [
     "TRF_RULE_SPECS",
     "TRF_RULES",
     "Violation",
+    "__version__",
     "analyze_file",
     "collect_class_bases",
     "colored_error_message",

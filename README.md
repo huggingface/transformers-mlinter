@@ -46,6 +46,9 @@ mlinter --changed-only --base-ref origin/main
 # List all available TRF rules and their default state
 mlinter --list-rules
 
+# Show the installed mlinter version
+mlinter --version
+
 # Show detailed documentation for one rule
 mlinter --rule TRF001
 
@@ -58,6 +61,8 @@ mlinter --enable-all-trf-rules
 # Emit GitHub Actions error annotations
 mlinter --github-annotations
 ```
+
+When installed from a git checkout or a `git+https://...` URL, `mlinter --version` includes a short commit hash suffix such as `0.1.0+gabcdef1`.
 
 You can also invoke it as a Python module:
 

@@ -16,11 +16,15 @@ import json
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import mlinter as public_api
 from mlinter import _helpers as _helpers_mod
+from mlinter import _version as _version_mod
 from mlinter import mlinter
 from mlinter import trf011 as _trf011_mod
 
@@ -589,6 +593,7 @@ class FooModel(FooPreTrainedModel):
         self.assertIs(public_api.format_rule_details, mlinter.format_rule_details)
         self.assertIs(public_api.render_rules_reference, mlinter.render_rules_reference)
         self.assertIs(public_api.Violation, _helpers_mod.Violation)
+        self.assertEqual(public_api.__version__, mlinter.__version__)
         self.assertIs(public_api.collect_class_bases, _helpers_mod._collect_class_bases)
         self.assertIs(public_api.has_rule_suppression, _helpers_mod._has_rule_suppression)
         self.assertIs(public_api.inherits_pretrained_model, _helpers_mod._inherits_pretrained_model)
@@ -598,6 +603,7 @@ class FooModel(FooPreTrainedModel):
         self.assertEqual(public_api.TRF015, "TRF015")
 
     def test_package_root_all_lists_supported_api(self):
+        self.assertIn("__version__", public_api.__all__)
         self.assertIn("analyze_file", public_api.__all__)
         self.assertIn("collect_class_bases", public_api.__all__)
         self.assertIn("model_dir_name", public_api.__all__)
@@ -609,6 +615,70 @@ class FooModel(FooPreTrainedModel):
 
     def test_mlinter_module_does_not_leak_rule_loop_variable(self):
         self.assertFalse(hasattr(mlinter, "_rule_id"))
+
+    def test_version_helper_reads_git_hash_from_direct_url(self):
+        dist = SimpleNamespace(
+            read_text=lambda name: json.dumps(
+                {
+                    "url": "https://github.com/huggingface/transformers-mlinter",
+                    "vcs_info": {
+                        "vcs": "git",
+                        "commit_id": "abcdef1234567890",
+                    },
+                }
+            )
+        )
+
+        self.assertEqual(_version_mod._read_git_hash_from_direct_url(dist), "abcdef1")
+
+    def test_version_helper_reads_git_hash_from_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir)
+            (project_root / ".git").write_text("gitdir: /tmp/fake\n", encoding="utf-8")
+
+            with (
+                patch.object(_version_mod, "PROJECT_ROOT", project_root),
+                patch.object(
+                    _version_mod.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess(
+                        args=["git", "rev-parse", "--short", "HEAD"],
+                        returncode=0,
+                        stdout="deadbee\n",
+                        stderr="",
+                    ),
+                ),
+            ):
+                self.assertEqual(_version_mod._read_git_hash_from_checkout(), "deadbee")
+
+    def test_version_helper_resolve_version_prefers_direct_url_hash(self):
+        dist = SimpleNamespace(
+            version="0.1.0",
+            read_text=lambda name: json.dumps(
+                {
+                    "url": "https://github.com/huggingface/transformers-mlinter",
+                    "vcs_info": {
+                        "vcs": "git",
+                        "commit_id": "abcdef1234567890",
+                    },
+                }
+            ),
+        )
+
+        with (
+            patch.object(_version_mod, "_installed_distribution", return_value=dist),
+            patch.object(_version_mod, "_read_git_hash_from_checkout", return_value="deadbee"),
+        ):
+            self.assertEqual(_version_mod._resolve_version(), "0.1.0+gabcdef1")
+
+    def test_parse_args_version_prints_version_and_exits(self):
+        stdout = StringIO()
+        with patch.object(mlinter.sys, "argv", ["mlinter", "--version"]), redirect_stdout(stdout):
+            with self.assertRaises(SystemExit) as exc:
+                mlinter.parse_args()
+
+        self.assertEqual(exc.exception.code, 0)
+        self.assertEqual(stdout.getvalue(), f"mlinter {mlinter.__version__}\n")
 
     def test_render_rules_reference_matches_rule_specs(self):
         rendered = public_api.render_rules_reference()

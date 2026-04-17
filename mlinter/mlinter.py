@@ -28,6 +28,7 @@ from rich import print
 from rich.console import Console
 
 from ._helpers import MODELS_ROOT, Violation, _model_dir_name
+from ._version import __version__
 
 
 try:
@@ -309,6 +310,7 @@ def emit_violation(violation: Violation, github_annotations: bool):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--version", action="version", version=f"mlinter {__version__}")
     parser.add_argument(
         "--changed-only",
         action="store_true",

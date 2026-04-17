@@ -26,12 +26,24 @@ except ModuleNotFoundError:
 
 PACKAGE_NAME = "transformers-mlinter"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_BASE_VERSION = "0.1.0"
 
 
-def _read_version_from_pyproject() -> str:
+def _read_version_from_pyproject() -> str | None:
     pyproject_path = PROJECT_ROOT / "pyproject.toml"
-    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    return data["project"]["version"]
+    try:
+        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, tomllib.TOMLDecodeError):
+        return None
+
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return None
+
+    version = project.get("version")
+    if not isinstance(version, str) or not version.strip():
+        return None
+    return version
 
 
 def _installed_distribution():
@@ -99,9 +111,15 @@ def _append_git_hash(base_version: str, git_hash: str | None) -> str:
     return f"{base_version}+g{git_hash}"
 
 
+def _resolve_base_version(dist) -> str:
+    if dist is not None:
+        return dist.version
+    return _read_version_from_pyproject() or DEFAULT_BASE_VERSION
+
+
 def _resolve_version() -> str:
     dist = _installed_distribution()
-    base_version = dist.version if dist is not None else _read_version_from_pyproject()
+    base_version = _resolve_base_version(dist)
     git_hash = _read_git_hash_from_direct_url(dist) or _read_git_hash_from_checkout()
     return _append_git_hash(base_version, git_hash)
 

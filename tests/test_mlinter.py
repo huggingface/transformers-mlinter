@@ -671,6 +671,14 @@ class FooModel(FooPreTrainedModel):
         ):
             self.assertEqual(_version_mod._resolve_version(), "0.1.0+gabcdef1")
 
+    def test_version_helper_resolve_version_falls_back_without_metadata_or_pyproject(self):
+        with (
+            patch.object(_version_mod, "_installed_distribution", return_value=None),
+            patch.object(_version_mod, "_read_version_from_pyproject", return_value=None),
+            patch.object(_version_mod, "_read_git_hash_from_checkout", return_value=None),
+        ):
+            self.assertEqual(_version_mod._resolve_version(), _version_mod.DEFAULT_BASE_VERSION)
+
     def test_parse_args_version_prints_version_and_exits(self):
         stdout = StringIO()
         with patch.object(mlinter.sys, "argv", ["mlinter", "--version"]), redirect_stdout(stdout):

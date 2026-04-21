@@ -93,17 +93,13 @@ python -c "import mlinter; print(mlinter.__version__)"
 deactivate
 ```
 
-## 5. Push the release branch
+## 5. Create the release branch
 
-Create or update the release branch for the target minor line and push it:
+Create or update the release branch for the target minor line:
 
 ```bash
 git switch -c vX.Y-release
-git push -u origin vX.Y-release
 ```
-
-The GitHub Actions `Release` workflow will build the distributions, run the tests, reinstall the built wheel, and run
-`twine check`.
 
 For patch releases, reuse the existing `vX.Y-release` branch instead of creating a new one.
 
@@ -126,29 +122,33 @@ python -m pip install \
 
 This step remains manual for now and is not part of the GitHub Actions workflow.
 
-## 7. Commit and tag the release
+## 7. Commit the release on the release branch
 
-Once the version bump and validation are done, commit the release and create an annotated tag:
+Once the version bump and validation are done, commit the release on `vX.Y-release` and push that branch:
 
 ```bash
 git add pyproject.toml mlinter/_version.py tests/test_mlinter.py README.md
 git commit -m "Release X.Y.Z"
-git tag vX.Y.Z -m "Release vX.Y.Z"
-git push origin main
+git push -u origin vX.Y-release
 ```
 
-Adjust the `git add` list if the release touched other files. If you created or updated a release branch, push that
-branch before pushing the tag.
+The GitHub Actions `Release` workflow will build the distributions, run the tests, reinstall the built wheel, and run
+`twine check` on that branch push.
 
-## 8. Publish through trusted publishing
+Adjust the `git add` list if the release touched other files.
+
+## 8. Tag the release and publish through trusted publishing
+
+From `vX.Y-release`, create the annotated tag and push it:
+
+```bash
+git tag vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
+```
 
 Pushing the `vX.Y.Z` tag triggers the same build job and then the publish job. The publish job runs in the
 `pypi-release` GitHub environment and uses `pypa/gh-action-pypi-publish` with `id-token: write`, so no long-lived PyPI
 API token is stored in GitHub.
-
-```bash
-git push origin vX.Y.Z
-```
 
 After the environment approval and publish job succeed, verify the package from PyPI:
 

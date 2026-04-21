@@ -96,3 +96,7 @@ Run the tests:
 ```bash
 pytest tests/
 ```
+
+## Releasing
+
+See [docs/release.md](docs/release.md) for the current release process.

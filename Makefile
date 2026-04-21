@@ -1,7 +1,11 @@
-.PHONY: build test lint format typecheck clean
+.PHONY: build build-release test lint format typecheck clean
 
 build:
 	pip install -e ".[dev]"
+
+build-release:
+	rm -rf build/ dist/ *.egg-info
+	python -m build
 
 test:
 	python -m pytest tests/ -v

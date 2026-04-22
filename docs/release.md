@@ -44,10 +44,12 @@ The base version is currently stored in two places:
 - `pyproject.toml` under `[project].version`
 - `mlinter/_version.py` in `DEFAULT_BASE_VERSION`
 
+Update `CHANGELOG.md` for the target release before tagging it.
+
 Search for version-specific tests before cutting the release:
 
 ```bash
-rg -n "0\.1\.0|DEFAULT_BASE_VERSION" pyproject.toml mlinter tests README.md
+rg -n "0\.1\.1|DEFAULT_BASE_VERSION" pyproject.toml mlinter tests README.md CHANGELOG.md
 ```
 
 Update any tests or examples that intentionally pin the released version string.
@@ -95,13 +97,18 @@ deactivate
 
 ## 5. Create the release branch
 
-Create or update the release branch for the target minor line:
+Create the release branch for a new minor line:
 
 ```bash
 git switch -c vX.Y-release
 ```
 
-For patch releases, reuse the existing `vX.Y-release` branch instead of creating a new one.
+For patch releases, update the existing `vX.Y-release` branch from `main` with a fast-forward merge:
+
+```bash
+git switch vX.Y-release
+git merge --ff-only main
+```
 
 ## 6. Optional TestPyPI smoke test
 
@@ -127,7 +134,7 @@ This step remains manual for now and is not part of the GitHub Actions workflow.
 Once the version bump and validation are done, commit the release on `vX.Y-release` and push that branch:
 
 ```bash
-git add pyproject.toml mlinter/_version.py tests/test_mlinter.py README.md
+git add CHANGELOG.md pyproject.toml mlinter/_version.py tests/test_mlinter.py README.md
 git commit -m "Release X.Y.Z"
 git push -u origin vX.Y-release
 ```

@@ -26,7 +26,7 @@ except ModuleNotFoundError:
 
 PACKAGE_NAME = "transformers-mlinter"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_BASE_VERSION = "0.1.0"
+DEFAULT_BASE_VERSION = "0.1.1"
 
 
 def _read_version_from_pyproject() -> str | None:

@@ -692,7 +692,7 @@ class FooModel(FooPreTrainedModel):
 
     def test_version_helper_resolve_version_prefers_direct_url_hash(self):
         dist = SimpleNamespace(
-            version="0.1.0",
+            version="0.1.1",
             read_text=lambda name: json.dumps(
                 {
                     "url": "https://github.com/huggingface/transformers-mlinter",
@@ -708,7 +708,7 @@ class FooModel(FooPreTrainedModel):
             patch.object(_version_mod, "_installed_distribution", return_value=dist),
             patch.object(_version_mod, "_read_git_hash_from_checkout", return_value="deadbee"),
         ):
-            self.assertEqual(_version_mod._resolve_version(), "0.1.0+gabcdef1")
+            self.assertEqual(_version_mod._resolve_version(), "0.1.1+gabcdef1")
 
     def test_version_helper_resolve_version_falls_back_without_metadata_or_pyproject(self):
         with (

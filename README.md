@@ -66,7 +66,7 @@ mlinter --enable-all-trf-rules
 mlinter --github-annotations
 ```
 
-When installed from a git checkout or a `git+https://...` URL, `mlinter --version` includes a short commit hash suffix such as `0.1.0+gabcdef1`.
+When installed from a git checkout or a `git+https://...` URL, `mlinter --version` includes a short commit hash suffix such as `0.1.1+gabcdef1`.
 
 You can also invoke it as a Python module:
 

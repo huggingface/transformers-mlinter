@@ -17,6 +17,7 @@ pip install -e ".[quality]"
 ## How rule registration works
 
 - Rule metadata lives in `mlinter/rules.toml`.
+- The TOML schema is versioned with a top-level `version = 1`. Custom files passed with `--rules-toml` must use the same schema version.
 - Executable TRF rules are auto-discovered from `trf*.py` modules in the `mlinter/` package.
 - Each module must define a `check(tree, file_path, source_lines) -> list[Violation]` function.
 - The module name determines the rule id: `trf003.py` → `TRF003`.
@@ -45,6 +46,9 @@ mlinter --changed-only --base-ref origin/main
 
 # List all available TRF rules and their default state
 mlinter --list-rules
+
+# Use a custom rules TOML instead of the bundled mlinter/rules.toml
+mlinter --rules-toml /path/to/custom-rules.toml
 
 # Show the installed mlinter version
 mlinter --version

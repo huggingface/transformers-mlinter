@@ -16,7 +16,7 @@ import json
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +30,25 @@ from mlinter import trf011 as _trf011_mod
 
 
 TEST_PP_PLAN_MODULES = {"foo": {"embed_tokens", "final_layer_norm", "layers", "norm"}}
+
+
+def _write_custom_rules_toml(
+    tmp_dir: Path, *, trf001_description: str | None = None, trf001_default_enabled: bool | None = None
+) -> Path:
+    text = mlinter.DEFAULT_RULE_SPECS_PATH.read_text(encoding="utf-8")
+    if trf001_description is not None:
+        text = text.replace(
+            'description = "Class-level config_class on <Model>PreTrainedModel should match <Model>Config naming."',
+            f'description = "{trf001_description}"',
+            1,
+        )
+    if trf001_default_enabled is not None:
+        replacement = "true" if trf001_default_enabled else "false"
+        text = text.replace("default_enabled = true", f"default_enabled = {replacement}", 1)
+
+    custom_rules_path = tmp_dir / "custom_rules.toml"
+    custom_rules_path.write_text(text, encoding="utf-8")
+    return custom_rules_path
 
 
 class CheckModelingStructureTest(unittest.TestCase):
@@ -688,10 +707,75 @@ class FooModel(FooPreTrainedModel):
         self.assertEqual(exc.exception.code, 0)
         self.assertEqual(stdout.getvalue(), f"mlinter {mlinter.__version__}\n")
 
+    def test_parse_args_accepts_custom_rules_toml(self):
+        custom_rules_path = Path("/tmp/custom_rules.toml")
+        with patch.object(mlinter.sys, "argv", ["mlinter", "--rules-toml", str(custom_rules_path)]):
+            args = mlinter.parse_args()
+
+        self.assertEqual(args.rules_toml, custom_rules_path)
+
     def test_render_rules_reference_matches_rule_specs(self):
         rendered = public_api.render_rules_reference()
         self.assertEqual(rendered.count("### TRF"), len(public_api.TRF_RULE_SPECS))
         self.assertTrue(rendered.endswith("\n"))
+
+    def test_main_uses_custom_rules_toml_for_rule_listing_and_restores_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_custom_rules_toml(
+                Path(tmp_dir),
+                trf001_description="Custom config_class guidance.",
+                trf001_default_enabled=False,
+            )
+            stdout = StringIO()
+            with (
+                patch.object(mlinter.sys, "argv", ["mlinter", "--rules-toml", str(custom_rules_path), "--list-rules"]),
+                redirect_stdout(stdout),
+            ):
+                exit_code = mlinter.main()
+
+        self.assertEqual(exit_code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("TRF001: Custom config_class guidance. (default: disabled)", rendered)
+        self.assertIn(
+            "Class-level config_class on <Model>PreTrainedModel should match <Model>Config naming.",
+            mlinter.format_rule_summary("TRF001"),
+        )
+
+    def test_content_hash_changes_with_custom_rule_specs(self):
+        source = "class FooPreTrainedModel(PreTrainedModel):\n    pass\n"
+        default_digest = mlinter._content_hash(source, {mlinter.TRF001})
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_custom_rules_toml(
+                Path(tmp_dir),
+                trf001_description="Custom config_class guidance.",
+                trf001_default_enabled=False,
+            )
+            with mlinter._using_rule_specs(custom_rules_path):
+                custom_digest = mlinter._content_hash(source, {mlinter.TRF001})
+
+        self.assertNotEqual(default_digest, custom_digest)
+        self.assertEqual(mlinter.ACTIVE_RULE_SPECS_PATH, mlinter.DEFAULT_RULE_SPECS_PATH)
+
+    def test_main_rejects_custom_rules_toml_with_unsupported_version(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_custom_rules_toml(Path(tmp_dir))
+            custom_rules_path.write_text(
+                custom_rules_path.read_text(encoding="utf-8").replace("version = 1", "version = 2", 1),
+                encoding="utf-8",
+            )
+            stdout = StringIO()
+            stderr = StringIO()
+            with (
+                patch.object(mlinter.sys, "argv", ["mlinter", "--rules-toml", str(custom_rules_path), "--list-rules"]),
+                redirect_stdout(stdout),
+                redirect_stderr(stderr),
+            ):
+                exit_code = mlinter.main()
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("expected version 1", stderr.getvalue())
 
     def test_analyze_file_allows_subscripted_class_bases(self):
         source = """

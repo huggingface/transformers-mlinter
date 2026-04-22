@@ -21,8 +21,9 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
+from typing import cast
 
 from rich import print
 from rich.console import Console
@@ -38,14 +39,37 @@ except ModuleNotFoundError:
 
 
 MODELING_PATTERNS = ("modeling_*.py", "modular_*.py", "configuration_*.py")
-RULE_SPECS_PATH = Path(__file__).with_name("rules.toml")
+DEFAULT_RULE_SPECS_PATH = Path(__file__).with_name("rules.toml")
+RULE_SPECS_VERSION = 1
+_RULE_REGISTRY_GLOBALS = (
+    "ACTIVE_RULE_SPECS_PATH",
+    "RULE_SPECS_HASH",
+    "TRF_RULE_SPECS",
+    "TRF_RULES",
+    "DEFAULT_ENABLED_TRF_RULES",
+    "TRF_MODEL_DIR_ALLOWLISTS",
+    "TRF_RULE_CHECKS",
+)
+ACTIVE_RULE_SPECS_PATH = DEFAULT_RULE_SPECS_PATH
+RULE_SPECS_HASH = ""
+TRF_RULE_SPECS: dict[str, dict[str, object]] = {}
+TRF_RULES: dict[str, str] = {}
+DEFAULT_ENABLED_TRF_RULES: set[str] = set()
+TRF_MODEL_DIR_ALLOWLISTS: dict[str, set[str]] = {}
+TRF_RULE_CHECKS: dict[str, Callable[[ast.Module, Path, list[str]], list[Violation]]] = {}
 
 
-def _load_rule_specs() -> dict[str, dict]:
-    data = tomllib.loads(RULE_SPECS_PATH.read_text(encoding="utf-8"))
+def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], str]:
+    raw_text = rule_specs_path.read_text(encoding="utf-8")
+    data = tomllib.loads(raw_text)
+    version = data.get("version")
+    if version != RULE_SPECS_VERSION:
+        raise ValueError(
+            f"Invalid rule spec file: expected version {RULE_SPECS_VERSION}, found {version!r} in {rule_specs_path}"
+        )
     rules = data.get("rules")
     if not isinstance(rules, dict):
-        raise ValueError(f"Invalid rule spec file: missing [rules] table in {RULE_SPECS_PATH}")
+        raise ValueError(f"Invalid rule spec file: missing [rules] table in {rule_specs_path}")
 
     required_explanation_keys = {"what_it_does", "why_bad", "diff"}
     specs: dict[str, dict] = {}
@@ -75,15 +99,9 @@ def _load_rule_specs() -> dict[str, dict]:
             "allowlist_models": set(allowlist_models),
         }
 
-    return specs
+    return specs, hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
 
 
-TRF_RULE_SPECS = _load_rule_specs()
-TRF_RULES = {rule_id: spec["description"] for rule_id, spec in TRF_RULE_SPECS.items()}
-DEFAULT_ENABLED_TRF_RULES = {rule_id for rule_id, spec in TRF_RULE_SPECS.items() if spec["default_enabled"]}
-TRF_MODEL_DIR_ALLOWLISTS = {
-    rule_id: spec["allowlist_models"] for rule_id, spec in TRF_RULE_SPECS.items() if spec["allowlist_models"]
-}
 CONSOLE = Console(stderr=True)
 CACHE_FILENAME = ".mlinter_cache.json"
 
@@ -116,6 +134,7 @@ def _find_companion_files(file_path: Path) -> list[Path]:
 def _content_hash(text: str, enabled_rules: set[str], companion_files: list[Path] | None = None) -> str:
     h = hashlib.sha256(text.encode("utf-8"))
     h.update(",".join(sorted(enabled_rules)).encode("utf-8"))
+    h.update(RULE_SPECS_HASH.encode("utf-8"))
     if companion_files:
         for companion in companion_files:
             try:
@@ -232,7 +251,7 @@ def get_changed_modeling_files(base_ref: str) -> set[Path]:
 CheckFn = Callable[[ast.Module, Path, list[str]], list[Violation]]
 
 
-def _build_rule_checks() -> dict[str, CheckFn]:
+def _build_rule_checks(rule_specs: dict[str, dict]) -> dict[str, CheckFn]:
     """Auto-discover check() functions from trf*.py modules in this package."""
     checks: dict[str, CheckFn] = {}
     package_dir = Path(__file__).parent
@@ -241,7 +260,7 @@ def _build_rule_checks() -> dict[str, CheckFn]:
         rule_id = _rule_id_from_module_name(module_name)
         if rule_id is None:
             continue
-        if rule_id not in TRF_RULE_SPECS:
+        if rule_id not in rule_specs:
             raise ValueError(f"Missing rule spec for discovered module {module_name} ({rule_id}).")
         mod = importlib.import_module(f".{module_name}", package=__package__)
         check_fn = getattr(mod, "check", None)
@@ -250,18 +269,57 @@ def _build_rule_checks() -> dict[str, CheckFn]:
         mod.RULE_ID = rule_id
         checks[rule_id] = check_fn
 
-    missing_checks = sorted(set(TRF_RULE_SPECS) - set(checks))
+    missing_checks = sorted(set(rule_specs) - set(checks))
     if missing_checks:
         raise ValueError(f"Missing check module(s) for rule id(s): {', '.join(missing_checks)}")
     return dict(sorted(checks.items()))
 
 
-TRF_RULE_CHECKS = _build_rule_checks()
+def _is_rule_id_name(name: str) -> bool:
+    return len(name) == 6 and name.startswith("TRF") and name[3:].isdigit()
 
-# Expose rule-id string constants (e.g. TRF001 == "TRF001") for test compatibility.
-for _rule_id in TRF_RULE_CHECKS:
-    globals()[_rule_id] = _rule_id
-del _rule_id
+
+def _refresh_rule_id_globals() -> None:
+    for name in [name for name in globals() if _is_rule_id_name(name)]:
+        if name not in TRF_RULE_CHECKS:
+            del globals()[name]
+    for rule_id in TRF_RULE_CHECKS:
+        globals()[rule_id] = rule_id
+
+
+def _rule_registry_snapshot() -> dict[str, object]:
+    return {name: globals()[name] for name in _RULE_REGISTRY_GLOBALS}
+
+
+def _activate_rule_registry(rule_specs_path: Path) -> None:
+    rule_specs, rules_hash = _load_rule_specs(rule_specs_path)
+    rule_state = {
+        "ACTIVE_RULE_SPECS_PATH": rule_specs_path,
+        "RULE_SPECS_HASH": rules_hash,
+        "TRF_RULE_SPECS": rule_specs,
+        "TRF_RULES": {rule_id: spec["description"] for rule_id, spec in rule_specs.items()},
+        "DEFAULT_ENABLED_TRF_RULES": {rule_id for rule_id, spec in rule_specs.items() if spec["default_enabled"]},
+        "TRF_MODEL_DIR_ALLOWLISTS": {
+            rule_id: spec["allowlist_models"] for rule_id, spec in rule_specs.items() if spec["allowlist_models"]
+        },
+        "TRF_RULE_CHECKS": _build_rule_checks(rule_specs),
+    }
+    globals().update(rule_state)
+    _refresh_rule_id_globals()
+
+
+@contextmanager
+def _using_rule_specs(rule_specs_path: Path):
+    previous_state = _rule_registry_snapshot()
+    _activate_rule_registry(rule_specs_path)
+    try:
+        yield
+    finally:
+        globals().update(previous_state)
+        _refresh_rule_id_globals()
+
+
+_activate_rule_registry(DEFAULT_RULE_SPECS_PATH)
 
 
 def analyze_file(file_path: Path, text: str, enabled_rules: set[str] | None = None) -> list[Violation]:
@@ -311,6 +369,12 @@ def emit_violation(violation: Violation, github_annotations: bool):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", action="version", version=f"mlinter {__version__}")
+    parser.add_argument(
+        "--rules-toml",
+        type=Path,
+        default=DEFAULT_RULE_SPECS_PATH,
+        help="Path to a rules TOML file. Defaults to the bundled mlinter/rules.toml.",
+    )
     parser.add_argument(
         "--changed-only",
         action="store_true",
@@ -381,7 +445,7 @@ def format_rule_summary(rule_id: str) -> str:
 
 def format_rule_details(rule_id: str) -> str:
     spec = TRF_RULE_SPECS[rule_id]
-    explanation = spec["explanation"]
+    explanation = cast(dict[str, str], spec["explanation"])
     return "\n".join(
         [
             f"### {rule_id}",
@@ -416,58 +480,73 @@ def maybe_handle_rule_docs_cli(args: argparse.Namespace) -> bool:
 
 def main() -> int:
     args = parse_args()
-    if maybe_handle_rule_docs_cli(args):
+    previous_state = _rule_registry_snapshot()
+    try:
+        _activate_rule_registry(args.rules_toml)
+    except (FileNotFoundError, OSError, tomllib.TOMLDecodeError, ValueError) as exc:
+        print(f"Failed to load rule specs from {args.rules_toml}: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        if maybe_handle_rule_docs_cli(args):
+            return 0
+
+        violations: list[Violation] = []
+        enabled_rules = resolve_enabled_rules(args)
+        selected_paths = get_changed_modeling_files(args.base_ref) if args.changed_only else None
+
+        modeling_files = list(iter_modeling_files(selected_paths))
+
+        show_progress = should_show_progress(args)
+        status_ctx = (
+            CONSOLE.status(f"[bold blue]Checking modeling structure ({len(modeling_files)} files)...[/bold blue]")
+            if show_progress
+            else nullcontext()
+        )
+
+        use_cache = not args.no_cache
+        cache = _load_cache() if use_cache else {}
+        new_cache: dict[str, str] = {}
+
+        with status_ctx:
+            for file_path in modeling_files:
+                try:
+                    text = file_path.read_text(encoding="utf-8")
+                    file_key = str(file_path)
+                    digest = _content_hash(text, enabled_rules, _find_companion_files(file_path))
+
+                    if use_cache and cache.get(file_key) == digest:
+                        new_cache[file_key] = digest
+                        continue
+
+                    file_violations = analyze_file(file_path, text, enabled_rules=enabled_rules)
+                    violations.extend(file_violations)
+
+                    if not file_violations:
+                        new_cache[file_key] = digest
+                except Exception as exc:
+                    violations.append(
+                        Violation(file_path=file_path, line_number=1, message=f"failed to parse ({exc}).")
+                    )
+
+        if use_cache:
+            _save_cache(new_cache)
+
+        if len(violations) > 0:
+            violations = sorted(violations, key=lambda v: (str(v.file_path), v.line_number, v.message))
+            for violation in violations:
+                emit_violation(violation, github_annotations=args.github_annotations)
+            print(f"Found {len(violations)} modeling structure violation(s).", file=sys.stderr)
+            return 1
+
+        print("OK")
         return 0
-
-    violations: list[Violation] = []
-    enabled_rules = resolve_enabled_rules(args)
-    selected_paths = get_changed_modeling_files(args.base_ref) if args.changed_only else None
-
-    modeling_files = list(iter_modeling_files(selected_paths))
-
-    show_progress = should_show_progress(args)
-    status_ctx = (
-        CONSOLE.status(f"[bold blue]Checking modeling structure ({len(modeling_files)} files)...[/bold blue]")
-        if show_progress
-        else nullcontext()
-    )
-
-    use_cache = not args.no_cache
-    cache = _load_cache() if use_cache else {}
-    new_cache: dict[str, str] = {}
-    skipped = 0
-
-    with status_ctx:
-        for file_path in modeling_files:
-            try:
-                text = file_path.read_text(encoding="utf-8")
-                file_key = str(file_path)
-                digest = _content_hash(text, enabled_rules, _find_companion_files(file_path))
-
-                if use_cache and cache.get(file_key) == digest:
-                    new_cache[file_key] = digest
-                    skipped += 1
-                    continue
-
-                file_violations = analyze_file(file_path, text, enabled_rules=enabled_rules)
-                violations.extend(file_violations)
-
-                if not file_violations:
-                    new_cache[file_key] = digest
-            except Exception as exc:
-                violations.append(Violation(file_path=file_path, line_number=1, message=f"failed to parse ({exc})."))
-
-    if use_cache:
-        _save_cache(new_cache)
-
-    if len(violations) > 0:
-        violations = sorted(violations, key=lambda v: (str(v.file_path), v.line_number, v.message))
-        for violation in violations:
-            emit_violation(violation, github_annotations=args.github_annotations)
-        print(f"Found {len(violations)} modeling structure violation(s).", file=sys.stderr)
-        return 1
-
-    print("OK")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    finally:
+        globals().update(previous_state)
+        _refresh_rule_id_globals()
     return 0
 
 

@@ -1,3 +1,5 @@
+version = 1
+
 [rules.TRF001]
 description = "Class-level config_class on <Model>PreTrainedModel should match <Model>Config naming."
 default_enabled = true

@@ -191,6 +191,26 @@ class FooModel:
         trf005 = [v for v in violations if v.rule_id == mlinter.TRF005]
         self.assertEqual(len(trf005), 1)
 
+    def test_trf005_allows_attribute_error_sentinel_in_modular(self):
+        source = """
+class FooModel(BarModel):
+    _no_split_modules = AttributeError()
+"""
+        file_path = Path("src/transformers/models/foo/modular_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF005})
+        trf005 = [v for v in violations if v.rule_id == mlinter.TRF005]
+        self.assertEqual(trf005, [])
+
+    def test_trf005_rejects_attribute_error_sentinel_in_modeling(self):
+        source = """
+class FooModel(BarModel):
+    _no_split_modules = AttributeError()
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF005})
+        trf005 = [v for v in violations if v.rule_id == mlinter.TRF005]
+        self.assertEqual(len(trf005), 1)
+
     # --- TRF006: cache args usage (old TRF010) ---
 
     def test_trf006_catches_unused_cache_args(self):

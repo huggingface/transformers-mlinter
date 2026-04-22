@@ -23,6 +23,11 @@ from ._helpers import Violation, _get_class_assignments, _has_rule_suppression
 RULE_ID = ""  # Set by discovery
 
 
+def _is_attribute_error_sentinel(value: ast.AST) -> bool:
+    """In modular files, ``attr = AttributeError(...)`` means "drop this attribute from the generated file"."""
+    return isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "AttributeError"
+
+
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     violations: list[Violation] = []
     for node in tree.body:
@@ -36,6 +41,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         if value is None:
             continue
         if isinstance(value, ast.Constant) and value.value is None:
+            continue
+        if file_path.name.startswith("modular_") and _is_attribute_error_sentinel(value):
             continue
         if not isinstance(value, (ast.List, ast.Tuple)):
             violations.append(

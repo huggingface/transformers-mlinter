@@ -27,6 +27,15 @@ pip install -e ".[quality]"
 
 ## How to add a new TRF rule
 
+The repo ships an `add-mlinter-rule` skill under `.ai/skills/` that walks an agent through duplicate detection, numbering, module creation, running against all models, and test scaffolding. Enable it for your agent of choice:
+
+```bash
+make claude   # symlinks .claude/skills -> .ai/skills (for Claude Code)
+make codex    # symlinks .agents/skills -> .ai/skills (for Codex)
+```
+
+After that, invoke it as `/add-mlinter-rule` in a new session. To add a rule manually:
+
 1. Add a `[rules.TRFXXX]` entry to `mlinter/rules.toml`.
 2. Fill in `description`, `default_enabled`, `explanation.what_it_does`, `explanation.why_bad`, and `explanation.diff`. Optional model-level exceptions go in `allowlist_models`.
 3. Create a new module `mlinter/trfXXX.py` with a `check(tree, file_path, source_lines) -> list[Violation]` function.

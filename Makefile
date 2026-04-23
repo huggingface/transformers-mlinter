@@ -1,4 +1,4 @@
-.PHONY: build build-release test lint format typecheck clean
+.PHONY: build build-release test lint format typecheck clean codex claude
 
 build:
 	pip install -e ".[dev]"
@@ -24,3 +24,13 @@ typecheck:
 clean:
 	rm -rf build/ dist/ *.egg-info
 	find . -type d -name __pycache__ -exec rm -rf {} +
+
+codex:
+	mkdir -p .agents
+	rm -rf .agents/skills
+	ln -snf ../.ai/skills .agents/skills
+
+claude:
+	mkdir -p .claude
+	rm -rf .claude/skills
+	ln -snf ../.ai/skills .claude/skills

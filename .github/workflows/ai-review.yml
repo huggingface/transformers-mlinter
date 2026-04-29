@@ -1,0 +1,63 @@
+name: AI PR Review
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review (dispatch-only test)'
+        required: false
+        default: '1'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       github.event.issue.state == 'open' &&
+       contains(github.event.comment.body, '@serge') &&
+       (github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'COLLABORATOR')) ||
+      (github.event_name == 'pull_request_review_comment' &&
+       contains(github.event.comment.body, '@serge') &&
+       (github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'COLLABORATOR'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR number
+        id: pr
+        run: |
+          if [ -n "${{ github.event.issue.number }}" ]; then
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.pull_request.number }}" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out PR head (shallow)
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ steps.pr.outputs.number }}/head
+          fetch-depth: 1
+
+      - uses: tarekziade/ai-reviewer@main
+        with:
+          llm_api_key: ${{ secrets.LLM_API_KEY }}
+          llm_api_base: ${{ secrets.LLM_API_BASE }}
+          llm_model: ${{ secrets.LLM_MODEL }}
+          llm_bill_to: ${{ secrets.LLM_BILL_TO }}
+          llm_max_tokens: ${{ secrets.LLM_MAX_TOKENS }}
+          max_diff_chars: ${{ secrets.MAX_DIFF_CHARS }}
+          llm_stream: 'true'

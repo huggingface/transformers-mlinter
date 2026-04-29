@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""Context-script invoked by tarekziade/ai-reviewer.
+
+ai-reviewer pipes a JSON document on stdin describing the PR (title,
+body, modified-file list); we respond with a JSON object on stdout:
+
+    {
+      "context": "<text injected into the reviewer prompt>",
+      "skip_files": ["<paths to drop from the diff>"]
+    }
+
+Both fields are optional; the reviewer treats them independently.
+
+For transformers-mlinter we use this to:
+
+1. Inject the minimum supported Python version, parsed from
+   `pyproject.toml` (`requires-python`), so the reviewer doesn't
+   suggest syntax newer than the floor.
+2. When a PR adds or modifies a TRF rule module (`mlinter/trf*.py`)
+   or `mlinter/rules.toml`, inject the add-mlinter-rule SKILL
+   workflow plus the public surface of `mlinter/_helpers.py` so the
+   reviewer knows the rule contract and available helpers.
+3. Surface TRF rule numbering state (next free ID, last few used
+   IDs) so the reviewer can sanity-check new rule numbers.
+4. Detect stale `RULE_ID` constants and missing license headers in
+   newly added rule modules and call them out explicitly.
+5. Cross-check `mlinter/rules.toml` and `mlinter/trf*.py` for
+   TOML-vs-module sync — flag a `[rules.TRFNNN]` entry without a
+   matching module, or a module without a TOML entry.
+
+Failures degrade silently — a broken hook must not break review.
+"""
+
+import ast
+import json
+import os
+import re
+import sys
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MLINTER_DIR = os.path.join(REPO_ROOT, "mlinter")
+RULES_TOML = os.path.join(MLINTER_DIR, "rules.toml")
+SKILL_PATH = os.path.join(
+    REPO_ROOT, ".ai", "skills", "add-mlinter-rule", "SKILL.md"
+)
+HELPERS_PATH = os.path.join(MLINTER_DIR, "_helpers.py")
+CLAUDE_MD = os.path.join(REPO_ROOT, "CLAUDE.md")
+
+EXCERPT_CHARS = 4000
+TOTAL_BUDGET = 7000  # leaves room inside ai-reviewer's ~8 KB cap
+
+TRF_MODULE_RE = re.compile(r"^mlinter/trf(\d{3})\.py$")
+TRF_TOML_SECTION_RE = re.compile(r"^\[rules\.TRF(\d{3})\]\s*$", re.MULTILINE)
+
+
+def parse_min_python_version() -> str | None:
+    pyproject = os.path.join(REPO_ROOT, "pyproject.toml")
+    try:
+        with open(pyproject, "r", encoding="utf-8") as fh:
+            source = fh.read()
+    except OSError:
+        return None
+    m = re.search(r'requires-python\s*=\s*"[^"]*?(\d+\.\d+)', source)
+    if not m:
+        return None
+    return m.group(1)
+
+
+def read_file(path: str, limit: int | None = None) -> str | None:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+    except OSError:
+        return None
+    if limit is not None and len(content) > limit:
+        content = content[:limit].rstrip() + "\n[... truncated ...]"
+    return content
+
+
+def existing_rule_numbers() -> list[int]:
+    nums: list[int] = []
+    if not os.path.isdir(MLINTER_DIR):
+        return nums
+    for name in os.listdir(MLINTER_DIR):
+        m = re.match(r"^trf(\d{3})\.py$", name)
+        if m:
+            nums.append(int(m.group(1)))
+    return sorted(nums)
+
+
+def toml_rule_numbers() -> list[int]:
+    content = read_file(RULES_TOML)
+    if content is None:
+        return []
+    return sorted(int(m.group(1)) for m in TRF_TOML_SECTION_RE.finditer(content))
+
+
+def helpers_public_surface() -> str | None:
+    """Extract top-level def/class names from `_helpers.py` so the reviewer
+    knows what's available without re-implementing it."""
+    source = read_file(HELPERS_PATH)
+    if source is None:
+        return None
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    lines: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            lines.append(f"- class `{node.name}`")
+        elif isinstance(node, ast.FunctionDef):
+            args = [a.arg for a in node.args.args]
+            lines.append(f"- def `{node.name}({', '.join(args)})`")
+        elif isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name) and tgt.id.isupper():
+                    lines.append(f"- const `{tgt.id}`")
+    if not lines:
+        return None
+    return "\n".join(lines)
+
+
+def rule_module_lints(paths: set[str]) -> list[str]:
+    """Quick static checks on rule modules touched in this PR.
+
+    Surfaces issues the reviewer would otherwise have to spot manually:
+    missing `RULE_ID`, hardcoded `"TRFNNN"` strings, forbidden runtime
+    imports, missing license header, wrong `check` signature.
+    """
+    findings: list[str] = []
+    for p in sorted(paths):
+        m = TRF_MODULE_RE.match(p)
+        if not m:
+            continue
+        full = os.path.join(REPO_ROOT, p)
+        source = read_file(full)
+        if source is None:
+            continue
+        rule_num = m.group(1)
+        rule_id = f"TRF{rule_num}"
+
+        if "Apache License" not in source[:2000] and "Licensed under" not in source[:2000]:
+            findings.append(f"`{p}`: missing Apache 2.0 license header.")
+
+        if "RULE_ID" not in source:
+            findings.append(f"`{p}`: missing module-level `RULE_ID` constant.")
+
+        # Hardcoded rule ID instead of RULE_ID reference.
+        body_after_docstring = source
+        if re.search(rf'"{rule_id}:[^"]*"', body_after_docstring):
+            findings.append(
+                f"`{p}`: appears to hardcode `\"{rule_id}: …\"` in messages — "
+                f"reference `RULE_ID` instead."
+            )
+
+        for forbidden in ("torch", "tensorflow", "transformers", "numpy", "jax"):
+            if re.search(rf"^\s*(?:from|import)\s+{forbidden}\b", source, re.MULTILINE):
+                findings.append(
+                    f"`{p}`: imports forbidden runtime dep `{forbidden}` — "
+                    f"rules must use `ast` only."
+                )
+
+        if "def check(" in source and "list[Violation]" not in source:
+            findings.append(
+                f"`{p}`: `check` function does not declare `-> list[Violation]` "
+                f"return type."
+            )
+
+    return findings
+
+
+def toml_module_sync(paths: set[str]) -> list[str]:
+    """If the diff touches rules.toml or any rule module, cross-check that
+    every TOML section has a matching module and vice versa."""
+    touches_rules = "mlinter/rules.toml" in paths or any(
+        TRF_MODULE_RE.match(p) for p in paths
+    )
+    if not touches_rules:
+        return []
+    modules = set(existing_rule_numbers())
+    toml_entries = set(toml_rule_numbers())
+    findings: list[str] = []
+    for n in sorted(toml_entries - modules):
+        findings.append(
+            f"TRF{n:03d}: `[rules.TRF{n:03d}]` in `rules.toml` has no "
+            f"matching `mlinter/trf{n:03d}.py` module."
+        )
+    for n in sorted(modules - toml_entries):
+        findings.append(
+            f"TRF{n:03d}: `mlinter/trf{n:03d}.py` exists with no matching "
+            f"`[rules.TRF{n:03d}]` entry in `rules.toml`."
+        )
+    return findings
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except json.JSONDecodeError as exc:
+        print(f"context-script: bad JSON on stdin: {exc}", file=sys.stderr)
+        return 1
+
+    files = payload.get("files") or []
+    paths = {f["path"] for f in files if isinstance(f, dict) and f.get("path")}
+
+    sections: list[str] = []
+
+    min_py = parse_min_python_version()
+    if min_py:
+        sections.append(
+            f"Minimum supported Python version: **{min_py}** "
+            f"(parsed from `pyproject.toml` `requires-python`).\n\n"
+            f"Treat this as a hard floor: do not request changes that rely on "
+            f"syntax or standard-library features introduced after Python "
+            f"{min_py}. Conversely, suggestions that *backport* code to "
+            f"versions older than {min_py} are also out of scope."
+        )
+
+    touches_rule_module = any(TRF_MODULE_RE.match(p) for p in paths)
+    touches_rules_toml = "mlinter/rules.toml" in paths
+
+    if touches_rule_module or touches_rules_toml:
+        nums = existing_rule_numbers()
+        next_id = (max(nums) + 1) if nums else 1
+        recent = ", ".join(f"TRF{n:03d}" for n in nums[-5:]) if nums else "none"
+        sections.append(
+            f"Rule numbering state:\n"
+            f"- Existing rule modules in `main`: {len(nums)} "
+            f"(most recent: {recent}).\n"
+            f"- Next free rule ID: **TRF{next_id:03d}**.\n"
+            f"- New rules must use the next free ID, three-digit zero-padded. "
+            f"Skipping numbers or reusing a retired ID needs justification."
+        )
+
+        skill = read_file(SKILL_PATH, limit=EXCERPT_CHARS)
+        if skill:
+            sections.append(
+                "Add-mlinter-rule SKILL workflow (the canonical process for "
+                "adding a TRF rule — use it to judge whether the PR follows "
+                "the steps):\n\n" + skill
+            )
+
+        helpers = helpers_public_surface()
+        if helpers:
+            sections.append(
+                "Public surface of `mlinter/_helpers.py` (rule modules should "
+                "reuse these instead of re-implementing AST traversal):\n\n"
+                + helpers
+            )
+
+        lint_findings = rule_module_lints(paths)
+        if lint_findings:
+            bullets = "\n".join(f"- {x}" for x in lint_findings)
+            sections.append(
+                "Static checks on rule modules touched in this PR "
+                "(surface these in the review if they aren't already "
+                "addressed in the diff):\n\n" + bullets
+            )
+
+        sync_findings = toml_module_sync(paths)
+        if sync_findings:
+            bullets = "\n".join(f"- {x}" for x in sync_findings)
+            sections.append(
+                "TOML / rule-module sync issues detected on the PR head:\n\n"
+                + bullets
+            )
+
+    # Trim total budget.
+    context_text = "\n\n".join(sections).strip()
+    if len(context_text) > TOTAL_BUDGET:
+        context_text = (
+            context_text[:TOTAL_BUDGET].rstrip()
+            + f"\n\n[context truncated to stay within {TOTAL_BUDGET}-char budget]"
+        )
+
+    out: dict = {}
+    if context_text:
+        out["context"] = context_text
+
+    if not out:
+        return 0
+    print(json.dumps(out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

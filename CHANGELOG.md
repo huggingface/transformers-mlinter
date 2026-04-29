@@ -5,6 +5,16 @@ All notable changes to `transformers-mlinter` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `TRF016`, which flags `do_*` boolean flags declared on image/video processor classes that are not referenced
+  by an overridden `preprocess` / `_preprocess` method (default disabled).
+- Expanded the set of files the linter targets to include `image_processing_*.py` and `video_processing_*.py` in
+  addition to `modeling_*.py`, `modular_*.py`, and `configuration_*.py`. This affects file discovery for every rule,
+  not just `TRF016`.
+
 ## [0.1.1] - 2026-04-22
 
 ### Added

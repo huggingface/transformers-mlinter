@@ -64,7 +64,11 @@ description: Add a new TRF rule to the mlinter. Checks for duplicates, creates t
    pytest tests/test_mlinter.py -x -v -k "trfXXX"
    ```
 
-8. Final validation.
+8. Update documentation.
+   - Add an entry under the `## [Unreleased]` section of `CHANGELOG.md` (create that section above the latest released version if it does not yet exist) describing the new rule. Mention any incidental changes shipped with it (e.g. expanding `MODELING_PATTERNS` to cover new file types), since those affect every rule.
+   - If the rule applies to file types not already documented in `README.md`, update the README accordingly.
+
+9. Final validation.
    ```bash
    make lint
    make test

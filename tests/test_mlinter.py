@@ -1192,6 +1192,162 @@ class FooConfig(PreTrainedConfig):
 
             self.assertNotEqual(digest_v1, digest_v2)
 
+    # --- TRF016: do_* flags must be referenced by overridden preprocess/_preprocess ---
+
+    def test_trf016_flags_dead_do_resize(self):
+        source = """
+class FooImageProcessor(BaseImageProcessor):
+    do_resize = True
+
+    def _preprocess(self, images, size, **kwargs):
+        for image in images:
+            image = self.resize(image, size=size)
+        return images
+"""
+        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
+        self.assertEqual(len(trf016), 1)
+        self.assertIn("do_resize", trf016[0].message)
+        self.assertIn("FooImageProcessor", trf016[0].message)
+
+    def test_trf016_allows_referenced_flag_in_signature(self):
+        source = """
+class FooImageProcessor(BaseImageProcessor):
+    do_resize = True
+
+    def _preprocess(self, images, do_resize, size, **kwargs):
+        for image in images:
+            if do_resize:
+                image = self.resize(image, size=size)
+        return images
+"""
+        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
+        self.assertEqual(trf016, [])
+
+    def test_trf016_allows_referenced_flag_in_body_only(self):
+        source = """
+class FooImageProcessor(BaseImageProcessor):
+    do_resize = True
+
+    def _preprocess(self, images, **kwargs):
+        do_resize = kwargs.get("do_resize", True)
+        for image in images:
+            if do_resize:
+                image = self.resize(image)
+        return images
+"""
+        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
+        self.assertEqual(trf016, [])
+
+    def test_trf016_allows_super_kwargs_forwarding(self):
+        source = """
+class FooImageProcessor(BaseImageProcessor):
+    do_resize = True
+    do_normalize = True
+
+    def _preprocess(self, images, **kwargs):
+        return super()._preprocess(images, **kwargs)
+"""
+        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
+        self.assertEqual(trf016, [])
+
+    def test_trf016_skips_class_without_preprocess_override(self):
+        source = """
+class FooImageProcessor(BaseImageProcessor):
+    do_resize = True
+    do_normalize = True
+"""
+        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
+        self.assertEqual(trf016, [])
+
+    def test_trf016_skips_non_processor_files(self):
+        source = """
+class FooModel(PreTrainedModel):
+    do_resize = True
+
+    def _preprocess(self, images):
+        return images
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
+        self.assertEqual(trf016, [])
+
+    def test_trf016_allowlists_do_sample_frames(self):
+        source = """
+class FooVideoProcessor(BaseVideoProcessor):
+    do_sample_frames = True
+
+    def _preprocess(self, videos, **kwargs):
+        return videos
+"""
+        file_path = Path("src/transformers/models/foo/video_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
+        self.assertEqual(trf016, [])
+
+    def test_trf016_flags_multiple_dead_flags(self):
+        source = """
+class FooVideoProcessor(BaseVideoProcessor):
+    do_resize = True
+    do_rescale = True
+    do_normalize = True
+    do_convert_rgb = True
+    do_sample_frames = True
+
+    def _preprocess(self, videos, size, image_mean, image_std, **kwargs):
+        for video in videos:
+            video = self.resize(video, size=size)
+            video = video / 255.0
+            video = self.normalize(video, image_mean, image_std)
+        return videos
+"""
+        file_path = Path("src/transformers/models/foo/video_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = sorted(v.message for v in violations if v.rule_id == mlinter.TRF016)
+        self.assertEqual(len(trf016), 4)
+        self.assertTrue(all("FooVideoProcessor" in m for m in trf016))
+        flag_names = {flag for flag in ("do_resize", "do_rescale", "do_normalize", "do_convert_rgb")
+                      if any(flag in m for m in trf016)}
+        self.assertEqual(flag_names, {"do_resize", "do_rescale", "do_normalize", "do_convert_rgb"})
+
+    def test_trf016_skips_non_bool_do_attribute(self):
+        source = """
+class FooImageProcessor(BaseImageProcessor):
+    do_resize = some_callable()
+
+    def _preprocess(self, images):
+        return images
+"""
+        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
+        self.assertEqual(trf016, [])
+
+    def test_trf016_respects_inline_suppression(self):
+        source = """
+class FooImageProcessor(BaseImageProcessor):
+    do_resize = True  # trf-ignore: TRF016
+
+    def _preprocess(self, images, size, **kwargs):
+        for image in images:
+            image = self.resize(image, size=size)
+        return images
+"""
+        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
+        trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
+        self.assertEqual(trf016, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,7 +38,13 @@ except ModuleNotFoundError:
     import tomli as tomllib  # Python 3.10 fallback
 
 
-MODELING_PATTERNS = ("modeling_*.py", "modular_*.py", "configuration_*.py")
+MODELING_PATTERNS = (
+    "modeling_*.py",
+    "modular_*.py",
+    "configuration_*.py",
+    "image_processing_*.py",
+    "video_processing_*.py",
+)
 DEFAULT_RULE_SPECS_PATH = Path(__file__).with_name("rules.toml")
 RULE_SPECS_VERSION = 1
 _RULE_REGISTRY_GLOBALS = (
@@ -211,7 +217,9 @@ def colored_error_message(file_path: str, line_number: int, message: str) -> str
 def _is_modeling_candidate(path: Path) -> bool:
     return (
         path.suffix == ".py"
-        and path.name.startswith(("modeling_", "modular_", "configuration_"))
+        and path.name.startswith(
+            ("modeling_", "modular_", "configuration_", "image_processing_", "video_processing_")
+        )
         and MODELS_ROOT in path.parents
     )
 
@@ -378,7 +386,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--changed-only",
         action="store_true",
-        help="Only check changed modeling/modular files compared to --base-ref, plus local worktree changes.",
+        help="Only check changed modeling, modular, configuration, and image/video processor files compared to --base-ref, plus local worktree changes.",
     )
     parser.add_argument(
         "--base-ref",

@@ -230,3 +230,35 @@ diff = '''
      hidden_size: int = 768
 +    tie_word_embeddings: bool = True
 '''
+
+[rules.TRF016]
+description = "do_* flags declared on a processor class must be referenced by overridden preprocess/_preprocess."
+default_enabled = false
+allowlist_models = []
+
+[rules.TRF016.explanation]
+what_it_does = "When an image_processing_*.py or video_processing_*.py class declares boolean do_* attributes (e.g. do_resize, do_rescale, do_normalize, do_convert_rgb) and overrides preprocess() or _preprocess(), checks that each declared flag is referenced inside the override (as a parameter, in the body, or forwarded via super()._preprocess(**kwargs)). The allowlist of base-handled flags (do_sample_frames) is exempted because the base preprocess() consumes them before _preprocess() runs."
+why_bad = "A do_X attribute that is not referenced by the override is a dead flag: setting do_X=False at construction or call time has no effect, and the underlying operation runs unconditionally. This silently breaks user expectations and makes per-call overrides ineffective."
+diff = '''
+ class AcmeVideoProcessor(BaseVideoProcessor):
+     do_resize = True
+     do_normalize = True
+
+     def _preprocess(
+         self,
+         videos,
++        do_resize: bool,
++        do_normalize: bool,
+         size,
+         image_mean,
+         image_std,
+         **kwargs,
+     ):
+         for video in videos:
+-            video = self.resize(video, size=size)
+-            video = self.normalize(video, image_mean, image_std)
++            if do_resize:
++                video = self.resize(video, size=size)
++            if do_normalize:
++                video = self.normalize(video, image_mean, image_std)
+'''

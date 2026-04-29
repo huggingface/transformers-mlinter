@@ -640,6 +640,7 @@ class FooModel(FooPreTrainedModel):
         self.assertIs(public_api.is_rule_allowlisted_for_file, mlinter._is_rule_allowlisted_for_file)
         self.assertEqual(public_api.TRF001, "TRF001")
         self.assertEqual(public_api.TRF015, "TRF015")
+        self.assertEqual(public_api.TRF016, "TRF016")
 
     def test_package_root_all_lists_supported_api(self):
         self.assertIn("__version__", public_api.__all__)
@@ -649,6 +650,7 @@ class FooModel(FooPreTrainedModel):
         self.assertIn("render_rules_reference", public_api.__all__)
         self.assertIn("TRF001", public_api.__all__)
         self.assertIn("TRF015", public_api.__all__)
+        self.assertIn("TRF016", public_api.__all__)
         self.assertNotIn("_collect_class_bases", public_api.__all__)
         self.assertNotIn("_rule_id", public_api.__all__)
 

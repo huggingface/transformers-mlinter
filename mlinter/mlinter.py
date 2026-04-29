@@ -217,9 +217,7 @@ def colored_error_message(file_path: str, line_number: int, message: str) -> str
 def _is_modeling_candidate(path: Path) -> bool:
     return (
         path.suffix == ".py"
-        and path.name.startswith(
-            ("modeling_", "modular_", "configuration_", "image_processing_", "video_processing_")
-        )
+        and path.name.startswith(("modeling_", "modular_", "configuration_", "image_processing_", "video_processing_"))
         and MODELS_ROOT in path.parents
     )
 

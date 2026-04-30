@@ -58,9 +58,9 @@ def _collect_do_flags(class_node: ast.ClassDef) -> dict[str, ast.AST]:
     return flags
 
 
-def _function_forwards_to_super(function_node: ast.FunctionDef) -> bool:
-    """Return True if the function calls super().preprocess(...) or super()._preprocess(...)
-    with **kwargs forwarding, i.e. the override delegates flag handling back to the base."""
+def _function_delegates_to_base_with_kwargs(function_node: ast.FunctionDef) -> bool:
+    """Return True if the override delegates preprocess handling to the base implementation
+    by calling super().preprocess(...) or super()._preprocess(...) with **kwargs."""
     for node in ast.walk(function_node):
         if not isinstance(node, ast.Call):
             continue
@@ -94,8 +94,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
             # Class doesn't override preprocess; the base applies the flags.
             continue
 
-        if _function_forwards_to_super(override):
-            # Override forwards **kwargs to super(); flags reach the base implementation.
+        if _function_delegates_to_base_with_kwargs(override):
+            # Override delegates to super() with **kwargs; the base implementation still handles the flags.
             continue
 
         for flag_name, flag_value in flags.items():
@@ -112,8 +112,10 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                     line_number=line,
                     message=(
                         f"{RULE_ID}: {class_node.name}.{flag_name} is declared but never referenced "
-                        f"by the overridden {override.name}() — the flag is dead. Either gate the "
-                        f"corresponding operation behind `if {flag_name}:` or remove the attribute."
+                        f"by the overridden {override.name}() — the flag currently has no effect. "
+                        f"Prefer gating the corresponding operation behind `if {flag_name}:`; only "
+                        f"remove the attribute if this processor architecture intentionally cannot "
+                        f"honor the standard flag contract."
                     ),
                 )
             )

@@ -1246,7 +1246,7 @@ class FooImageProcessor(BaseImageProcessor):
         trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
         self.assertEqual(trf016, [])
 
-    def test_trf016_allows_super_kwargs_forwarding(self):
+    def test_trf016_allows_delegating_flag_handling_to_super(self):
         source = """
 class FooImageProcessor(BaseImageProcessor):
     do_resize = True

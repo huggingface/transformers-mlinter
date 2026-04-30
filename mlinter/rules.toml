@@ -237,7 +237,7 @@ default_enabled = false
 allowlist_models = []
 
 [rules.TRF016.explanation]
-what_it_does = "When an image_processing_*.py or video_processing_*.py class declares boolean do_* attributes (e.g. do_resize, do_rescale, do_normalize, do_convert_rgb) and overrides preprocess() or _preprocess(), checks that each declared flag is referenced inside the override (as a parameter, in the body, or by delegating to the base implementation via super().preprocess(..., **kwargs) or super()._preprocess(..., **kwargs)). The allowlist of base-handled flags (do_sample_frames) is exempted because the base preprocess() consumes them before _preprocess() runs."
+what_it_does = "When an image_processing_*.py or video_processing_*.py class declares boolean do_* attributes (e.g. do_resize, do_rescale, do_normalize, do_convert_rgb) and overrides preprocess() or _preprocess(), checks that each declared flag is still consumed along the override path. That can be a direct reference in the override body, delegating back to the base implementation via super().preprocess(..., **kwargs) or super()._preprocess(..., **kwargs), or, for image processors, forwarding do_convert_rgb into the shared image-preparation path via _preprocess_image_like_inputs(...) or _prepare_image_like_inputs(...). The allowlist of base-handled flags (do_sample_frames) is exempted because the base preprocess() consumes them before _preprocess() runs."
 why_bad = "A do_X attribute that is not referenced by the override is a dead flag: setting do_X=False at construction or call time has no effect, and the underlying operation runs unconditionally. This silently breaks user expectations and makes per-call overrides ineffective."
 diff = '''
  class AcmeVideoProcessor(BaseVideoProcessor):

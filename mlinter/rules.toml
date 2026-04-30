@@ -233,7 +233,7 @@ diff = '''
 
 [rules.TRF016]
 description = "do_* flags declared on a processor class must be referenced by overridden preprocess/_preprocess."
-default_enabled = false
+default_enabled = true
 allowlist_models = []
 
 [rules.TRF016.explanation]

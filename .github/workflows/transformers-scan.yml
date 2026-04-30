@@ -1,0 +1,57 @@
+name: Scan transformers
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      transformers_ref:
+        description: 'huggingface/transformers ref to scan'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Run all rules against huggingface/transformers
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out mlinter
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install .
+
+      - name: Shallow-clone huggingface/transformers
+        env:
+          TRANSFORMERS_REF: ${{ github.event.inputs.transformers_ref || 'main' }}
+        run: |
+          git clone --depth 1 --branch "$TRANSFORMERS_REF" \
+            https://github.com/huggingface/transformers.git transformers
+          git -C transformers rev-parse HEAD > TRANSFORMERS_SHA
+          echo "TRANSFORMERS_SHA=$(cat TRANSFORMERS_SHA)" >> "$GITHUB_ENV"
+          echo "TRANSFORMERS_REF=$TRANSFORMERS_REF" >> "$GITHUB_ENV"
+
+      - name: Run mlinter against transformers
+        working-directory: transformers
+        run: python ../scripts/scan_transformers.py --output-dir "$GITHUB_WORKSPACE"
+
+      - name: Upload scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transformers-scan-report
+          path: |
+            scan-report.md
+            scan-violations.txt
+            TRANSFORMERS_SHA

@@ -1438,6 +1438,94 @@ class FooImageProcessor(BaseImageProcessor):
         trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
         self.assertEqual(trf016, [])
 
+    # --- TRF018: _init_weights overrides should call super ---
+
+    def test_trf018_flags_missing_super_call(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    def _init_weights(self, module):
+        if isinstance(module, FooCustomLayer):
+            module.gate.data.zero_()
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(len(trf018), 1)
+        self.assertIn("does not call `super()._init_weights", trf018[0].message)
+
+    def test_trf018_allows_super_call(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    def _init_weights(self, module):
+        super()._init_weights(module)
+        if isinstance(module, FooCustomLayer):
+            module.gate.data.zero_()
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(trf018, [])
+
+    def test_trf018_allows_unbound_pretrained_model_call_in_modular(self):
+        source = """
+class FooPreTrainedModel(LlamaPreTrainedModel):
+    def _init_weights(self, module):
+        PreTrainedModel._init_weights(self, module)
+        if isinstance(module, FooCustomLayer):
+            module.gate.data.zero_()
+"""
+        file_path = Path("src/transformers/models/foo/modular_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(trf018, [])
+
+    def test_trf018_allows_attribute_error_sentinel_in_modular(self):
+        source = """
+class FooPreTrainedModel(LlamaPreTrainedModel):
+    def _init_weights(self, module):
+        raise AttributeError("Not needed")
+"""
+        file_path = Path("src/transformers/models/foo/modular_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(trf018, [])
+
+    def test_trf018_does_not_skip_attribute_error_in_non_modular(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    def _init_weights(self, module):
+        raise AttributeError("Not needed")
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(len(trf018), 1)
+
+    def test_trf018_respects_inline_suppression(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    # trf-ignore: TRF018
+    def _init_weights(self, module):
+        if isinstance(module, FooCustomLayer):
+            module.gate.data.zero_()
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(trf018, [])
+
+    def test_trf018_skips_non_pretrained_classes(self):
+        source = """
+class FooHelper:
+    def _init_weights(self, module):
+        if isinstance(module, FooCustomLayer):
+            module.gate.data.zero_()
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(trf018, [])
+
 
 if __name__ == "__main__":
     unittest.main()

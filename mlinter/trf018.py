@@ -59,10 +59,6 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
             if _has_rule_suppression(source_lines, RULE_ID, sub_node.lineno):
                 continue
 
-            args = sub_node.args.args
-            if len(args) < 2 or getattr(args[0], "arg", None) != "self":
-                continue
-
             if "modular_" in file_path.name and _is_modular_delete_sentinel(sub_node):
                 continue
 

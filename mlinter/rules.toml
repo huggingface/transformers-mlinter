@@ -262,3 +262,23 @@ diff = '''
 +            if do_normalize:
 +                video = self.normalize(video, image_mean, image_std)
 '''
+
+[rules.TRF017]
+description = "@auto_docstring must be placed above @dataclass on output classes."
+default_enabled = true
+allowlist_models = []
+
+[rules.TRF017.explanation]
+what_it_does = "Checks classes decorated with both @auto_docstring and @dataclass for source ordering: @auto_docstring must appear above @dataclass."
+why_bad = "Decorators are applied bottom-up. When @dataclass is listed above @auto_docstring, @auto_docstring runs first on a class that has no synthesized __init__ yet and ends up modifying the parent class's __init__.__doc__ instead of the subclass's."
+diff = '''
+-@dataclass
+ @auto_docstring(
+     custom_intro="""
+     Output type of [`AcmeForPreTraining`].
+     """
+ )
++@dataclass
+ class AcmeForPreTrainingOutput(ModelOutput):
+     ...
+'''

@@ -641,6 +641,7 @@ class FooModel(FooPreTrainedModel):
         self.assertEqual(public_api.TRF001, "TRF001")
         self.assertEqual(public_api.TRF015, "TRF015")
         self.assertEqual(public_api.TRF016, "TRF016")
+        self.assertEqual(public_api.TRF017, "TRF017")
 
     def test_package_root_all_lists_supported_api(self):
         self.assertIn("__version__", public_api.__all__)
@@ -651,6 +652,7 @@ class FooModel(FooPreTrainedModel):
         self.assertIn("TRF001", public_api.__all__)
         self.assertIn("TRF015", public_api.__all__)
         self.assertIn("TRF016", public_api.__all__)
+        self.assertIn("TRF017", public_api.__all__)
         self.assertNotIn("_collect_class_bases", public_api.__all__)
         self.assertNotIn("_rule_id", public_api.__all__)
 
@@ -1437,6 +1439,85 @@ class FooImageProcessor(BaseImageProcessor):
         violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
         trf016 = [v for v in violations if v.rule_id == mlinter.TRF016]
         self.assertEqual(trf016, [])
+
+    # --- TRF017: @auto_docstring must be placed above @dataclass ---
+
+    def test_trf017_flags_dataclass_above_auto_docstring(self):
+        source = """
+@dataclass
+@auto_docstring
+class FooOutput(ModelOutput):
+    last_hidden_state: torch.FloatTensor = None
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
+        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        self.assertEqual(len(trf017), 1)
+        self.assertIn("FooOutput", trf017[0].message)
+        self.assertIn("@dataclass listed above @auto_docstring", trf017[0].message)
+
+    def test_trf017_flags_dataclass_above_called_auto_docstring(self):
+        source = '''
+@dataclass
+@auto_docstring(
+    custom_intro="""
+    Output type of [`FooForPreTraining`].
+    """
+)
+class FooForPreTrainingOutput(ModelOutput):
+    loss: torch.FloatTensor = None
+'''
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
+        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        self.assertEqual(len(trf017), 1)
+        self.assertIn("FooForPreTrainingOutput", trf017[0].message)
+
+    def test_trf017_allows_auto_docstring_above_dataclass(self):
+        source = """
+@auto_docstring
+@dataclass
+class FooOutput(ModelOutput):
+    last_hidden_state: torch.FloatTensor = None
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
+        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        self.assertEqual(trf017, [])
+
+    def test_trf017_allows_dataclass_only(self):
+        source = """
+@dataclass
+class FooOutput(ModelOutput):
+    last_hidden_state: torch.FloatTensor = None
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
+        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        self.assertEqual(trf017, [])
+
+    def test_trf017_allows_auto_docstring_only(self):
+        source = """
+@auto_docstring
+class FooModel(PreTrainedModel):
+    pass
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
+        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        self.assertEqual(trf017, [])
+
+    def test_trf017_respects_inline_suppression(self):
+        source = """
+@dataclass  # trf-ignore: TRF017
+@auto_docstring
+class FooOutput(ModelOutput):
+    last_hidden_state: torch.FloatTensor = None
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
+        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        self.assertEqual(trf017, [])
 
 
 if __name__ == "__main__":

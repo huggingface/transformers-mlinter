@@ -14,6 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Expanded the set of files the linter targets to include `image_processing_*.py` and `video_processing_*.py` in
   addition to `modeling_*.py`, `modular_*.py`, and `configuration_*.py`. This affects file discovery for every rule,
   not just `TRF016`.
+- Added `TRF017`, which flags model output classes decorated with both `@auto_docstring` and `@dataclass` where
+  `@dataclass` is listed above `@auto_docstring`. Bottom-up decorator application means `@auto_docstring` then runs
+  before `@dataclass` synthesizes `__init__`, and ends up modifying the parent class's `__init__.__doc__` instead of
+  the subclass's. Mirrors the upstream fix in
+  [huggingface/transformers#45702](https://github.com/huggingface/transformers/pull/45702).
 
 ## [0.1.1] - 2026-04-22
 

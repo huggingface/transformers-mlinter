@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Added `TRF016`, which flags `do_*` boolean flags declared on image/video processor classes that are not referenced
   by an overridden `preprocess` / `_preprocess` method (default disabled).
+- Added `TRF018`, which flags `_init_weights` overrides on `PreTrainedModel` subclasses that do not chain via
+  `super()._init_weights(...)` (or the modular-file equivalent `<Class>._init_weights(self, ...)`). Models that
+  intentionally fully override initialization can suppress with `# trf-ignore: TRF018`. Modular files using the
+  `raise AttributeError(...)` delete-sentinel are skipped. See
+  https://github.com/huggingface/transformers/pull/45597 for the bug class this catches.
 - Expanded the set of files the linter targets to include `image_processing_*.py` and `video_processing_*.py` in
   addition to `modeling_*.py`, `modular_*.py`, and `configuration_*.py`. This affects file discovery for every rule,
   not just `TRF016`.

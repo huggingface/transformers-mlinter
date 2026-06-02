@@ -199,14 +199,36 @@ def _rule_id_from_module_name(name: str) -> str | None:
     return name.upper()
 
 
+# Banner that the modular converter writes near the top of every file it generates.
+_GENERATED_FILE_MARKER = "This file was automatically generated from"
+
+
+def _is_generated_file(path: Path) -> bool:
+    """Whether ``path`` is a derived file produced from a ``modular_*.py`` source.
+
+    Generated files (e.g. ``modeling_*.py`` / ``configuration_*.py`` emitted by the modular
+    converter) carry an auto-generation banner near the top. They are derived artifacts: the
+    modular source is linted instead, so scanning them only produces violations that cannot be
+    fixed in place (edits get overwritten on the next generation).
+    """
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            head = handle.read(1024)
+    except OSError:
+        return False
+    return _GENERATED_FILE_MARKER in head
+
+
 def iter_modeling_files(paths: set[Path] | None = None):
     if paths is None:
         for pattern in MODELING_PATTERNS:
-            yield from MODELS_ROOT.rglob(pattern)
+            for path in MODELS_ROOT.rglob(pattern):
+                if not _is_generated_file(path):
+                    yield path
         return
 
     for path in sorted(paths):
-        if path.exists():
+        if path.exists() and not _is_generated_file(path):
             yield path
 
 

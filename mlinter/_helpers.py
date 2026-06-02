@@ -65,10 +65,22 @@ def _has_rule_suppression(lines: list[str], rule_id: str, line_number: int) -> b
     if line_number <= 0:
         return False
     token = f"trf-ignore: {rule_id}".lower()
-    candidate_indexes = (line_number - 1, line_number - 2)
-    for idx in candidate_indexes:
-        if 0 <= idx < len(lines) and token in lines[idx].lower():
+    # Accept the suppression on the target line itself (inline comment).
+    idx = line_number - 1
+    if 0 <= idx < len(lines) and token in lines[idx].lower():
+        return True
+    # Walk upward from the line directly above the target, skipping any decorator lines, so the
+    # comment can sit above decorators (e.g. above `@torch.no_grad()`) and not only squeezed
+    # between the decorator and the `def`. Stop at the first non-decorator, non-matching line.
+    idx -= 1
+    while 0 <= idx < len(lines):
+        stripped = lines[idx].strip()
+        if token in stripped.lower():
             return True
+        if stripped.startswith("@"):
+            idx -= 1
+            continue
+        break
     return False
 
 

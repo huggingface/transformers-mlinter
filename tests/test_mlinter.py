@@ -1521,6 +1521,31 @@ class FooOutput(ModelOutput):
         trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
         self.assertEqual(trf017, [])
 
+    # --- Generated-file skipping ---
+
+    def test_iter_modeling_files_skips_generated_files(self):
+        banner = "# This file was automatically generated from src/transformers/models/foo/modular_foo.py.\n"
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            models_root = Path(tmp_dir)
+            model_dir = models_root / "foo"
+            model_dir.mkdir()
+            generated = model_dir / "modeling_foo.py"
+            generated.write_text(banner + "class FooModel: ...\n", encoding="utf-8")
+            handwritten = model_dir / "modeling_bar.py"
+            handwritten.write_text("class BarModel: ...\n", encoding="utf-8")
+            modular = model_dir / "modular_foo.py"
+            modular.write_text("class FooModel: ...\n", encoding="utf-8")
+
+            self.assertTrue(mlinter._is_generated_file(generated))
+            self.assertFalse(mlinter._is_generated_file(handwritten))
+            self.assertFalse(mlinter._is_generated_file(modular))
+
+            with patch.object(mlinter, "MODELS_ROOT", models_root):
+                found = set(mlinter.iter_modeling_files())
+            self.assertNotIn(generated, found)
+            self.assertIn(handwritten, found)
+            self.assertIn(modular, found)
+
     # --- TRF018: _init_weights overrides should call super ---
 
     def test_trf018_flags_missing_super_call(self):
@@ -1597,6 +1622,20 @@ class FooPreTrainedModel(PreTrainedModel):
         trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
         self.assertEqual(trf018, [])
 
+    def test_trf018_suppression_above_decorator(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    # trf-ignore: TRF018
+    @torch.no_grad()
+    def _init_weights(self, module):
+        if isinstance(module, FooCustomLayer):
+            module.gate.data.zero_()
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(trf018, [])
+
     def test_trf018_skips_non_pretrained_classes(self):
         source = """
 class FooHelper:
@@ -1608,6 +1647,71 @@ class FooHelper:
         violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
         trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
         self.assertEqual(trf018, [])
+
+    # --- generated-file filtering ---
+
+    def test_is_generated_file_detects_banner(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "modeling_foo.py"
+            path.write_text(
+                "#                This file was automatically generated from foo/modular_foo.py.\n"
+                "class FooModel:\n    pass\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(mlinter._is_generated_file(path))
+
+    def test_is_generated_file_false_for_handwritten_source(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "modular_foo.py"
+            path.write_text("class FooModel:\n    pass\n", encoding="utf-8")
+            self.assertFalse(mlinter._is_generated_file(path))
+
+    def test_is_generated_file_false_for_missing_file(self):
+        missing = Path("/nonexistent/modeling_foo.py")
+        self.assertFalse(mlinter._is_generated_file(missing))
+
+    def test_is_generated_file_only_reads_head(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "modeling_foo.py"
+            # Banner buried past the 1KB head is not treated as a generation marker.
+            path.write_text(
+                "x = 0\n" * 400 + f"# {mlinter._GENERATED_FILE_MARKER} foo/modular_foo.py\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(mlinter._is_generated_file(path))
+
+    def test_iter_modeling_files_skips_generated_in_explicit_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir)
+            generated = model_dir / "modeling_foo.py"
+            generated.write_text(
+                f"# {mlinter._GENERATED_FILE_MARKER} foo/modular_foo.py\nclass FooModel:\n    pass\n",
+                encoding="utf-8",
+            )
+            source = model_dir / "modular_foo.py"
+            source.write_text("class FooModel:\n    pass\n", encoding="utf-8")
+
+            yielded = list(mlinter.iter_modeling_files({generated, source}))
+
+            self.assertEqual(yielded, [source])
+
+    def test_iter_modeling_files_skips_generated_when_walking_models_root(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            models_root = Path(tmpdir)
+            model_dir = models_root / "foo"
+            model_dir.mkdir()
+            generated = model_dir / "modeling_foo.py"
+            generated.write_text(
+                f"# {mlinter._GENERATED_FILE_MARKER} foo/modular_foo.py\nclass FooModel:\n    pass\n",
+                encoding="utf-8",
+            )
+            source = model_dir / "modular_foo.py"
+            source.write_text("class FooModel:\n    pass\n", encoding="utf-8")
+
+            with patch.object(mlinter, "MODELS_ROOT", models_root):
+                yielded = set(mlinter.iter_modeling_files())
+
+            self.assertEqual(yielded, {source})
 
 
 if __name__ == "__main__":

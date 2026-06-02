@@ -202,7 +202,10 @@ diff = '''
 [rules.TRF014]
 description = "`trust_remote_code` should never be used in native model integrations."
 default_enabled = true
-allowlist_models = []
+# The `auto` package is the loader layer that *implements* the `trust_remote_code`
+# feature, forwarding the user-supplied flag to `*.from_pretrained`. It is not a native
+# model integration, so it is exempt from this rule.
+allowlist_models = ["auto"]
 
 [rules.TRF014.explanation]
 what_it_does = "Checks whether `trust_remote_code` is passed or used in code (e.g. as kwarg) within native model integration files."

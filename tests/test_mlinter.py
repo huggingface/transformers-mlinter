@@ -1727,7 +1727,8 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
     images_kwargs: FooImageProcessorKwargs
 """
         file_path = Path("src/transformers/models/foo/processing_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        with patch.object(_trf019_mod, "get_first_commit_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
         self.assertEqual(len(trf019), 1)
         self.assertIn("_defaults", trf019[0].message)
@@ -1802,7 +1803,8 @@ class FooVisionProcessorKwargs(ProcessorKwargs, total=False):
     _defaults = {"images_kwargs": {"do_resize": True}}
 """
         file_path = Path("src/transformers/models/foo/processing_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        with patch.object(_trf019_mod, "get_first_commit_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
         self.assertEqual(len(trf019), 2)
 
@@ -1816,7 +1818,7 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
         file_path = Path("src/transformers/models/foo/processing_foo.py")
         with (
             patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-10"),
-            patch.object(_trf019_mod, "_file_first_commit_date", return_value=date(2025, 1, 1)),
+            patch.object(_trf019_mod, "get_first_commit_date", return_value=date(2025, 1, 1)),
         ):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
@@ -1832,7 +1834,7 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
         file_path = Path("src/transformers/models/foo/processing_foo.py")
         with (
             patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-10"),
-            patch.object(_trf019_mod, "_file_first_commit_date", return_value=date(2026, 6, 10)),
+            patch.object(_trf019_mod, "get_first_commit_date", return_value=date(2026, 6, 10)),
         ):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
@@ -1846,7 +1848,7 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
         file_path = Path("src/transformers/models/foo/processing_foo.py")
         with (
             patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-10"),
-            patch.object(_trf019_mod, "_file_first_commit_date", return_value=None),
+            patch.object(_trf019_mod, "get_first_commit_date", return_value=None),
         ):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]

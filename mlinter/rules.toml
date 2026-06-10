@@ -300,3 +300,22 @@ diff = '''
      if isinstance(module, AcmeCustomLayer):
          module.gate.data.zero_()
 '''
+
+[rules.TRF019]
+description = "ModelNameProcessorKwargs must not define _defaults; move them to processor_config.json."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-10"
+
+[rules.TRF019.explanation]
+what_it_does = "Checks that `*ProcessorKwargs` TypedDict classes in `processing_*.py` files do not set a non-empty `_defaults` dict. Old models are allowlisted for backwards compatibility; new models must not hardcode defaults in Python."
+why_bad = "Hardcoding defaults in `_defaults` scatters processor configuration across Python source files, makes it impossible to override defaults without code changes, and bloats new model contributions. The canonical home for processor defaults is `processor_config.json`, which ships with the checkpoint and can be updated without touching code."
+diff = '''
+ class AcmeProcessorKwargs(ProcessorKwargs, total=False):
+-    _defaults = {
+-        "text_kwargs": {"padding": False},
+-        "images_kwargs": {"return_tensors": "pt"},
+-    }
+     text_kwargs: AcmeTokenizerKwargs
+     images_kwargs: AcmeImageProcessorKwargs
+'''

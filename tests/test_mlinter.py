@@ -27,6 +27,7 @@ from mlinter import _helpers as _helpers_mod
 from mlinter import _version as _version_mod
 from mlinter import mlinter
 from mlinter import trf011 as _trf011_mod
+from mlinter import trf019 as _trf019_mod
 
 
 TEST_PP_PLAN_MODULES = {"foo": {"embed_tokens", "final_layer_norm", "layers", "norm"}}
@@ -1712,6 +1713,155 @@ class FooHelper:
                 yielded = set(mlinter.iter_modeling_files())
 
             self.assertEqual(yielded, {source})
+
+    # --- TRF019: ModelNameProcessorKwargs must not define _defaults ---
+
+    def test_trf019_flags_non_empty_defaults(self):
+        source = """
+class FooProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {"padding": False},
+        "images_kwargs": {"return_tensors": "pt"},
+    }
+    text_kwargs: FooTokenizerKwargs
+    images_kwargs: FooImageProcessorKwargs
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 1)
+        self.assertIn("_defaults", trf019[0].message)
+        self.assertIn("processor_config.json", trf019[0].message)
+
+    def test_trf019_no_violation_without_defaults(self):
+        source = """
+class FooProcessorKwargs(ProcessorKwargs, total=False):
+    text_kwargs: FooTokenizerKwargs
+    images_kwargs: FooImageProcessorKwargs
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 0)
+
+    def test_trf019_no_violation_with_empty_defaults(self):
+        source = """
+class FooProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {}
+    text_kwargs: FooTokenizerKwargs
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 0)
+
+    def test_trf019_ignores_non_processing_files(self):
+        source = """
+class FooProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {"padding": False},
+    }
+"""
+        for file_name in ("image_processing_foo.py", "modeling_foo.py", "configuration_foo.py"):
+            file_path = Path(f"src/transformers/models/foo/{file_name}")
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+            trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+            self.assertEqual(len(trf019), 0, f"Expected no violation in {file_name}")
+
+    def test_trf019_ignores_non_processor_kwargs_classes(self):
+        source = """
+class FooConfig:
+    _defaults = {
+        "text_kwargs": {"padding": False},
+    }
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 0)
+
+    def test_trf019_allowlisted_model_skipped(self):
+        source = """
+class FooProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {"padding": False},
+    }
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        with patch.dict(mlinter.TRF_MODEL_DIR_ALLOWLISTS, {mlinter.TRF019: {"foo"}}):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 0)
+
+    def test_trf019_flags_multiple_kwargs_classes(self):
+        source = """
+class FooTextProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {"text_kwargs": {"truncation": True}}
+
+class FooVisionProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {"images_kwargs": {"do_resize": True}}
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 2)
+
+    def test_trf019_cutoff_exempts_file_committed_before_cutoff(self):
+        from datetime import date
+
+        source = """
+class FooProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {"text_kwargs": {"padding": False}}
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        with (
+            patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-10"),
+            patch.object(_trf019_mod, "_file_first_commit_date", return_value=date(2025, 1, 1)),
+        ):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 0)
+
+    def test_trf019_cutoff_flags_file_committed_on_or_after_cutoff(self):
+        from datetime import date
+
+        source = """
+class FooProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {"text_kwargs": {"padding": False}}
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        with (
+            patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-10"),
+            patch.object(_trf019_mod, "_file_first_commit_date", return_value=date(2026, 6, 10)),
+        ):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 1)
+
+    def test_trf019_cutoff_flags_file_not_in_git(self):
+        source = """
+class FooProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {"text_kwargs": {"padding": False}}
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        with (
+            patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-10"),
+            patch.object(_trf019_mod, "_file_first_commit_date", return_value=None),
+        ):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 1)
+
+    def test_trf019_no_cutoff_always_flags(self):
+        source = """
+class FooProcessorKwargs(ProcessorKwargs, total=False):
+    _defaults = {"text_kwargs": {"padding": False}}
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        with patch.object(_trf019_mod, "CUTOFF_DATE", ""):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
+        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        self.assertEqual(len(trf019), 1)
 
 
 if __name__ == "__main__":

@@ -100,6 +100,8 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], str]:
         if not isinstance(allowlist_models, list) or any(not isinstance(item, str) for item in allowlist_models):
             raise ValueError(f"Invalid rule spec for {rule_id}: allowlist_models must be list[str]")
 
+        # Some rules are applied on new models, released after cutoff date. So we dont' have to keep
+        # a long list of old models were a rule is allowed due ot BC
         cutoff_date = spec.get("cutoff_date")
         if cutoff_date is not None:
             if not isinstance(cutoff_date, str):

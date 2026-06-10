@@ -15,14 +15,11 @@
 """TRF019: `ProcessorKwargs` must not define non-empty `_defaults`; move them in `processor_config.json` in the hub."""
 
 import ast
-import os
 import subprocess
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
-from datetime import date
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
-
 
 from ._helpers import Violation
 

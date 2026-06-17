@@ -17,7 +17,6 @@
 import ast
 import re
 from datetime import date
-from functools import lru_cache
 from pathlib import Path
 
 from ._helpers import Violation, _model_dir_name

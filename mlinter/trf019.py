@@ -65,7 +65,7 @@ def model_contribution_date(file_path: Path) -> date | None:
     except OSError:
         return None
     match = _CONTRIBUTION_DATE_RE.search(text)
-    return date.fromisoformat(m.group(2)) if match is not None else match
+    return date.fromisoformat(match.group(2)) if match is not None else match
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:

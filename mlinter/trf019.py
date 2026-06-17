@@ -15,20 +15,23 @@
 """TRF019: `ProcessorKwargs` must not define non-empty `_defaults`; move them in `processor_config.json` in the hub."""
 
 import ast
-import subprocess
-from datetime import date, datetime
+import re
+from datetime import date
+from functools import lru_cache
 from pathlib import Path
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
-from ._helpers import Violation
+from ._helpers import Violation, _model_dir_name
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
 
-# Check the main `transformers` repo, not the fork/working branch/etc
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/huggingface/transformers/main"
+DOCS_ROOT = Path("docs/source/en/model_doc")
+
+_CONTRIBUTION_DATE_RE = re.compile(
+    r"\n\*This model was (?:published in HF papers on (.*) and )?"
+    r"contributed to Hugging Face Transformers on (\d{4}-\d{2}-\d{2})\.\*"
+)
 
 
 def _is_processing_file(file_path: Path) -> bool:
@@ -51,61 +54,18 @@ def _is_non_empty_dict(node: ast.AST) -> bool:
     return isinstance(node, ast.Dict) and len(node.keys) > 0
 
 
-# The helper for date are copied from `transformers/utils/add_dates.py` which checks models' release date
-def check_file_exists_on_github(file_path: str) -> bool:
-    """Check if a file exists on the main branch of the GitHub repository.
-
-    Args:
-        file_path: Relative path from repository root
-
-    Returns:
-        True if file exists on GitHub main branch (or if check failed), False only if confirmed 404
-
-    Note:
-        On network errors or other issues, returns True (assumes file exists) with a warning.
-        This prevents the script from failing due to temporary network issues.
-    """
-    # Convert absolute path to relative path from repository root if needed
-    # if file_path.startswith(ROOT):
-    #     file_path = file_path[len(ROOT) :].lstrip("/")
-
-    # Construct the raw GitHub URL for the file
-    url = f"{GITHUB_RAW_URL}/{file_path}"
-
+def model_contribution_date(file_path: Path) -> date | None:
+    """Return the Transformers contribution date from the model's doc page, or None if not found."""
+    model_name = _model_dir_name(file_path)
+    if model_name is None:
+        return None
+    doc_path = DOCS_ROOT / f"{model_name}.md"
     try:
-        # Make a HEAD request to check if file exists (more efficient than GET)
-        request = Request(url, method="HEAD")
-        request.add_header("User-Agent", "transformers-add-dates-script")
-
-        with urlopen(request, timeout=10) as response:
-            return response.status == 200
-    except HTTPError as e:
-        if e.code == 404:
-            # File doesn't exist on GitHub
-            return False
-        # HTTP error (non-404): assume file exists and continue with local git history
-        return True
-    except Exception:
-        # Network/timeout error: assume file exists and continue with local git history
-        return True
-
-
-def get_first_commit_date(file_path: Path) -> datetime | None:
-    """Get the first commit date of the model's init file or model.md. This date is considered as the date the model was added to HF transformers"""
-
-    # Check if file exists on GitHub main branch
-    file_exists_on_github = check_file_exists_on_github(file_path)
-
-    if not file_exists_on_github:
-        # File does not exist on GitHub main branch (new model), use today's date
-        final_date = date.today().isoformat()
-    else:
-        # File exists on GitHub main branch, get the first commit date from local git history
-        final_date = subprocess.check_output(
-            ["git", "log", "--reverse", "--pretty=format:%ad", "--date=iso", file_path], text=True
-        )
-    out = final_date.strip()
-    return date.fromisoformat(out.split("\n")[0][:10]) if out else None
+        text = doc_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = _CONTRIBUTION_DATE_RE.search(text)
+    return date.fromisoformat(m.group(2)) if match is not None else match
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
@@ -114,8 +74,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
 
     if CUTOFF_DATE:
         cutoff = date.fromisoformat(CUTOFF_DATE)
-        first_commit = get_first_commit_date(file_path)
-        if first_commit is not None and first_commit < cutoff:
+        contribution_date = model_contribution_date(file_path)
+        if contribution_date is not None and contribution_date < cutoff:
             return []
 
     violations: list[Violation] = []

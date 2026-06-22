@@ -85,7 +85,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         if not any(base.id == "ProcessingKwargs" for base in node.bases if isinstance(base, ast.Name)):
             continue
 
-        if any(_has_rule_suppression(source_lines, RULE_ID, lineno) for lineno in node.lineno):
+        if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
+            continue
             continue
 
         stmt = _defaults_assignment(node)

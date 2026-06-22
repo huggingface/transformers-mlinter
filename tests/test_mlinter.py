@@ -1714,6 +1714,23 @@ class FooHelper:
 
             self.assertEqual(yielded, {source})
 
+    def test_iter_modeling_files_returns_processing_files(self):
+        expected = set()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            models_root = Path(tmpdir)
+            model_dir = models_root / "foo"
+            model_dir.mkdir()
+            filenames = ["modeling_foo.py", "processing_foo.py", "image_processing_foo.py", "video_processing_foo.py"]
+            for name in filenames:
+                path = model_dir / name
+                path.write_text(f"import torch", encoding="utf-8")
+                expected.add(path)
+
+            with patch.object(mlinter, "MODELS_ROOT", models_root):
+                yielded = set(mlinter.iter_modeling_files())
+
+            self.assertEqual(yielded, expected)
+
     # --- TRF019: ModelNameProcessorKwargs must not define _defaults ---
 
     def test_trf019_flags_non_empty_defaults(self):

@@ -1723,7 +1723,7 @@ class FooHelper:
             filenames = ["modeling_foo.py", "processing_foo.py", "image_processing_foo.py", "video_processing_foo.py"]
             for name in filenames:
                 path = model_dir / name
-                path.write_text(f"import torch", encoding="utf-8")
+                path.write_text("import torch", encoding="utf-8")
                 expected.add(path)
 
             with patch.object(mlinter, "MODELS_ROOT", models_root):

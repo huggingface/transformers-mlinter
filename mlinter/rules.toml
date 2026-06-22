@@ -300,3 +300,21 @@ diff = '''
      if isinstance(module, AcmeCustomLayer):
          module.gate.data.zero_()
 '''
+
+[rules.TRF019]
+description = "A processor TypedDict class must not define `_defaults`, instead push them upstream to the hub (`processor_config.json`)."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF019.explanation]
+what_it_does = "Checks that `*ProcessorKwargs` TypedDict classes in `processing_*.py` files do not set a non-empty `_defaults` dict. Old models released before cutoff date are not checked against the rule for backwards compatibility; new models must not hardcode defaults in Python."
+why_bad = "Hardcoding defaults in `_defaults` scatters processor configuration across Python source files, makes it unintuitive when it comes to overriding defaults via config, and bloats up the code. The canonical home for processor defaults is `processor_config.json` on the hub, which is shipped with the checkpoint and can be updated without touching code."
+diff = '''
+ class Gemma4ProcessorKwargs(ProcessingKwargs, total=False):
+-    _defaults = {
+-        "text_kwargs": {"padding": False},
+-        "images_kwargs": {"return_tensors": "pt"},
+-    }
+     images_kwargs: Gemma4ImageProcessorKwargs
+'''

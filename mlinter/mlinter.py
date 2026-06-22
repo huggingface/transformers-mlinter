@@ -14,6 +14,7 @@
 
 import argparse
 import ast
+import datetime
 import hashlib
 import importlib
 import json
@@ -44,6 +45,7 @@ MODELING_PATTERNS = (
     "configuration_*.py",
     "image_processing_*.py",
     "video_processing_*.py",
+    "processing_*.py",
 )
 DEFAULT_RULE_SPECS_PATH = Path(__file__).with_name("rules.toml")
 RULE_SPECS_VERSION = 1
@@ -98,11 +100,25 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], str]:
         if not isinstance(allowlist_models, list) or any(not isinstance(item, str) for item in allowlist_models):
             raise ValueError(f"Invalid rule spec for {rule_id}: allowlist_models must be list[str]")
 
+        # Some rules are applied on new models, released after cutoff date. We don't have to maintain a long
+        # allowlist of old models where the rule is allowed due to BC, if we filter by model addition date!
+        cutoff_date = spec.get("cutoff_date")
+        if cutoff_date is not None:
+            if not isinstance(cutoff_date, str):
+                raise ValueError(f"Invalid rule spec for {rule_id}: cutoff_date must be a string")
+            try:
+                datetime.date.fromisoformat(cutoff_date)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid rule spec for {rule_id}: cutoff_date must be YYYY-MM-DD, got {cutoff_date!r}"
+                )
+
         specs[rule_id] = {
             "description": description,
             "default_enabled": default_enabled,
             "explanation": explanation,
             "allowlist_models": set(allowlist_models),
+            "cutoff_date": cutoff_date,
         }
 
     return specs, hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
@@ -239,7 +255,9 @@ def colored_error_message(file_path: str, line_number: int, message: str) -> str
 def _is_modeling_candidate(path: Path) -> bool:
     return (
         path.suffix == ".py"
-        and path.name.startswith(("modeling_", "modular_", "configuration_", "image_processing_", "video_processing_"))
+        and path.name.startswith(
+            ("modeling_", "modular_", "configuration_", "image_processing_", "video_processing_", "processing_")
+        )
         and MODELS_ROOT in path.parents
     )
 
@@ -295,6 +313,9 @@ def _build_rule_checks(rule_specs: dict[str, dict]) -> dict[str, CheckFn]:
         if not callable(check_fn):
             raise ValueError(f"Module {module_name} must define a check() function.")
         mod.RULE_ID = rule_id
+        cutoff_date = rule_specs[rule_id].get("cutoff_date")
+        if cutoff_date is not None and hasattr(mod, "CUTOFF_DATE"):
+            mod.CUTOFF_DATE = cutoff_date
         checks[rule_id] = check_fn
 
     missing_checks = sorted(set(rule_specs) - set(checks))

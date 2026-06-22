@@ -82,9 +82,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         if not isinstance(node, ast.ClassDef):
             continue
 
-        if not any(
-            base.id == "ProcessingKwargs" for base in node.bases if isinstance(base, ast.Name)
-        ):
+        if not any(base.id == "ProcessingKwargs" for base in node.bases if isinstance(base, ast.Name)):
             continue
 
         if any(_has_rule_suppression(source_lines, RULE_ID, lineno) for lineno in node.lineno):

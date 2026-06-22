@@ -87,7 +87,6 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
 
         if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
             continue
-            continue
 
         stmt = _defaults_assignment(node)
         if stmt is None:

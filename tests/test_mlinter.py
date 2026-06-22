@@ -1718,7 +1718,7 @@ class FooHelper:
 
     def test_trf019_flags_non_empty_defaults(self):
         source = """
-class FooProcessorKwargs(ProcessorKwargs, total=False):
+class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {
         "text_kwargs": {"padding": False},
         "images_kwargs": {"return_tensors": "pt"},
@@ -1736,7 +1736,7 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
 
     def test_trf019_no_violation_without_defaults(self):
         source = """
-class FooProcessorKwargs(ProcessorKwargs, total=False):
+class FooProcessorKwargs(ProcessingKwargs, total=False):
     text_kwargs: FooTokenizerKwargs
     images_kwargs: FooImageProcessorKwargs
 """
@@ -1747,7 +1747,7 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
 
     def test_trf019_no_violation_with_empty_defaults(self):
         source = """
-class FooProcessorKwargs(ProcessorKwargs, total=False):
+class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {}
     text_kwargs: FooTokenizerKwargs
 """
@@ -1758,7 +1758,7 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
 
     def test_trf019_ignores_non_processing_files(self):
         source = """
-class FooProcessorKwargs(ProcessorKwargs, total=False):
+class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {
         "text_kwargs": {"padding": False},
     }
@@ -1783,7 +1783,7 @@ class FooConfig:
 
     def test_trf019_allowlisted_model_skipped(self):
         source = """
-class FooProcessorKwargs(ProcessorKwargs, total=False):
+class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {
         "text_kwargs": {"padding": False},
     }
@@ -1796,10 +1796,10 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
 
     def test_trf019_flags_multiple_kwargs_classes(self):
         source = """
-class FooTextProcessorKwargs(ProcessorKwargs, total=False):
+class FooTextProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {"text_kwargs": {"truncation": True}}
 
-class FooVisionProcessorKwargs(ProcessorKwargs, total=False):
+class FooVisionProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {"images_kwargs": {"do_resize": True}}
 """
         file_path = Path("src/transformers/models/foo/processing_foo.py")
@@ -1812,7 +1812,7 @@ class FooVisionProcessorKwargs(ProcessorKwargs, total=False):
         from datetime import date
 
         source = """
-class FooProcessorKwargs(ProcessorKwargs, total=False):
+class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {"text_kwargs": {"padding": False}}
 """
         file_path = Path("src/transformers/models/foo/processing_foo.py")
@@ -1828,12 +1828,12 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
         from datetime import date
 
         source = """
-class FooProcessorKwargs(ProcessorKwargs, total=False):
+class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {"text_kwargs": {"padding": False}}
 """
         file_path = Path("src/transformers/models/foo/processing_foo.py")
         with (
-            patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-10"),
+            patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-09"),
             patch.object(_trf019_mod, "model_contribution_date", return_value=date(2026, 6, 10)),
         ):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
@@ -1842,7 +1842,7 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
 
     def test_trf019_cutoff_flags_file_not_in_git(self):
         source = """
-class FooProcessorKwargs(ProcessorKwargs, total=False):
+class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {"text_kwargs": {"padding": False}}
 """
         file_path = Path("src/transformers/models/foo/processing_foo.py")
@@ -1856,7 +1856,7 @@ class FooProcessorKwargs(ProcessorKwargs, total=False):
 
     def test_trf019_no_cutoff_always_flags(self):
         source = """
-class FooProcessorKwargs(ProcessorKwargs, total=False):
+class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {"text_kwargs": {"padding": False}}
 """
         file_path = Path("src/transformers/models/foo/processing_foo.py")

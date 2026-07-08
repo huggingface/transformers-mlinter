@@ -26,7 +26,10 @@ except ModuleNotFoundError:
 
 PACKAGE_NAME = "transformers-mlinter"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_BASE_VERSION = "0.1.2"
+# Last-resort sentinel used only when neither the installed distribution metadata
+# nor pyproject.toml can be read. The real version lives solely in pyproject.toml,
+# so this constant is deliberately not bumped per release.
+DEFAULT_BASE_VERSION = "0.0.0"
 
 
 def _read_version_from_pyproject() -> str | None:

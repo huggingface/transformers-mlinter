@@ -39,20 +39,22 @@ normal project publisher for subsequent releases.
 
 ## 1. Update the version
 
-The base version is currently stored in two places:
+The version is stored in a single place:
 
 - `pyproject.toml` under `[project].version`
-- `mlinter/_version.py` in `DEFAULT_BASE_VERSION`
 
-Update `CHANGELOG.md` for the target release before tagging it.
+At runtime `mlinter/_version.py` resolves the version from the installed
+distribution metadata, falling back to reading `pyproject.toml`, so no other source
+file needs a version bump. `mlinter/_version.py` keeps a static `DEFAULT_BASE_VERSION`
+sentinel (`0.0.0`) that is only used when neither source is available and is not
+bumped per release.
 
-Search for version-specific tests before cutting the release:
+Update `CHANGELOG.md` for the target release before tagging it. To confirm nothing
+else pins the old version, you can sanity-check with:
 
 ```bash
-rg -n "0\.1\.2|DEFAULT_BASE_VERSION" pyproject.toml mlinter tests README.md CHANGELOG.md
+rg -n "[0-9]+\.[0-9]+\.[0-9]+" pyproject.toml CHANGELOG.md
 ```
-
-Update any tests or examples that intentionally pin the released version string.
 
 ## 2. Run the local checks
 

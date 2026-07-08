@@ -24,10 +24,12 @@ RULE_ID = ""  # Set by discovery
 
 
 def _is_unbound_init_weights_call(node: ast.AST) -> bool:
-    """Return True for `<SomeClass>._init_weights(self, ...)` — the modular-file equivalent of super()."""
+    """Return True for `PreTrainedModel._init_weights(self, ...)`."""
     if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
         return False
     if node.func.attr != "_init_weights":
+        return False
+    if not isinstance(node.func.value, ast.Name) or node.func.value.id != "PreTrainedModel":
         return False
     if not node.args:
         return False
@@ -51,6 +53,7 @@ def _is_modular_delete_sentinel(function_node: ast.FunctionDef) -> bool:
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     violations: list[Violation] = []
+    is_modular_file = "modular_" in file_path.name
 
     for class_node in iter_pretrained_classes(tree, source_lines, RULE_ID):
         for sub_node in class_node.body:
@@ -59,11 +62,12 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
             if _has_rule_suppression(source_lines, RULE_ID, sub_node.lineno):
                 continue
 
-            if "modular_" in file_path.name and _is_modular_delete_sentinel(sub_node):
+            if is_modular_file and _is_modular_delete_sentinel(sub_node):
                 continue
 
             calls_super = any(
-                is_super_method_call(node, method="_init_weights") or _is_unbound_init_weights_call(node)
+                is_super_method_call(node, method="_init_weights")
+                or (is_modular_file and _is_unbound_init_weights_call(node))
                 for node in ast.walk(sub_node)
             )
             if calls_super:

@@ -1588,6 +1588,19 @@ class FooPreTrainedModel(LlamaPreTrainedModel):
         trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
         self.assertEqual(trf018, [])
 
+    def test_trf018_does_not_skip_unbound_pretrained_model_call_in_non_modular(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    def _init_weights(self, module):
+        PreTrainedModel._init_weights(self, module)
+        if isinstance(module, FooCustomLayer):
+            module.gate.data.zero_()
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(len(trf018), 1)
+
     def test_trf018_allows_attribute_error_sentinel_in_modular(self):
         source = """
 class FooPreTrainedModel(LlamaPreTrainedModel):

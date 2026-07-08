@@ -49,7 +49,7 @@ Update `CHANGELOG.md` for the target release before tagging it.
 Search for version-specific tests before cutting the release:
 
 ```bash
-rg -n "0\.1\.1|DEFAULT_BASE_VERSION" pyproject.toml mlinter tests README.md CHANGELOG.md
+rg -n "0\.1\.2|DEFAULT_BASE_VERSION" pyproject.toml mlinter tests README.md CHANGELOG.md
 ```
 
 Update any tests or examples that intentionally pin the released version string.

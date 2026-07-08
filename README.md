@@ -1,6 +1,6 @@
 # mlinter
 
-A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers) modeling files. It enforces structural conventions on every `modeling_*.py`, `modular_*.py`, `configuration_*.py`, `image_processing_*.py`, and `video_processing_*.py` file under `src/transformers/models`.
+A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers) model integration files. It enforces structural conventions on every `modeling_*.py`, `modular_*.py`, `configuration_*.py`, `image_processing_*.py`, `video_processing_*.py`, and `processing_*.py` file under `src/transformers/models`.
 
 ## Installation
 
@@ -47,7 +47,7 @@ After that, invoke it as `/add-mlinter-rule` in a new session. To add a rule man
 Run from the root of a transformers checkout:
 
 ```bash
-# Check all modeling, modular, and configuration files
+# Check all model integration files
 mlinter
 
 # Only check files changed against a git base ref
@@ -75,7 +75,7 @@ mlinter --enable-all-trf-rules
 mlinter --github-annotations
 ```
 
-When installed from a git checkout or a `git+https://...` URL, `mlinter --version` includes a short commit hash suffix such as `0.1.1+gabcdef1`.
+When installed from a git checkout or a `git+https://...` URL, `mlinter --version` includes a short commit hash suffix such as `0.1.2+gabcdef1`.
 
 You can also invoke it as a Python module:
 

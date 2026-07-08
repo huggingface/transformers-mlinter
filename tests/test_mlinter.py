@@ -644,6 +644,7 @@ class FooModel(FooPreTrainedModel):
         self.assertEqual(public_api.TRF016, "TRF016")
         self.assertEqual(public_api.TRF017, "TRF017")
         self.assertEqual(public_api.TRF018, "TRF018")
+        self.assertEqual(public_api.TRF019, "TRF019")
 
     def test_package_root_all_lists_supported_api(self):
         self.assertIn("__version__", public_api.__all__)
@@ -656,6 +657,7 @@ class FooModel(FooPreTrainedModel):
         self.assertIn("TRF016", public_api.__all__)
         self.assertIn("TRF017", public_api.__all__)
         self.assertIn("TRF018", public_api.__all__)
+        self.assertIn("TRF019", public_api.__all__)
         self.assertNotIn("_collect_class_bases", public_api.__all__)
         self.assertNotIn("_rule_id", public_api.__all__)
 
@@ -699,7 +701,7 @@ class FooModel(FooPreTrainedModel):
 
     def test_version_helper_resolve_version_prefers_direct_url_hash(self):
         dist = SimpleNamespace(
-            version="0.1.1",
+            version="0.1.2",
             read_text=lambda name: json.dumps(
                 {
                     "url": "https://github.com/huggingface/transformers-mlinter",
@@ -715,7 +717,7 @@ class FooModel(FooPreTrainedModel):
             patch.object(_version_mod, "_installed_distribution", return_value=dist),
             patch.object(_version_mod, "_read_git_hash_from_checkout", return_value="deadbee"),
         ):
-            self.assertEqual(_version_mod._resolve_version(), "0.1.1+gabcdef1")
+            self.assertEqual(_version_mod._resolve_version(), "0.1.2+gabcdef1")
 
     def test_version_helper_resolve_version_falls_back_without_metadata_or_pyproject(self):
         with (

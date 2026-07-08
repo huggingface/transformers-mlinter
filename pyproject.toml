@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "transformers-mlinter"
-version = "0.1.1"
-description = "Lint modeling, modular, and configuration files for Hugging Face Transformers structural conventions."
+version = "0.1.2"
+description = "Lint Hugging Face Transformers model integration files for structural conventions."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"

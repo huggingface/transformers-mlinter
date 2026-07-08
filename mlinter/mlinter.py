@@ -427,7 +427,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--changed-only",
         action="store_true",
-        help="Only check changed modeling, modular, configuration, and image/video processor files compared to --base-ref, plus local worktree changes.",
+        help="Only check changed model integration files compared to --base-ref, plus local worktree changes.",
     )
     parser.add_argument(
         "--base-ref",

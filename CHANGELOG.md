@@ -5,6 +5,18 @@ All notable changes to `transformers-mlinter` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `TRF020`, which enforces that Multi-head Latent Attention (MLA) models — those whose configuration declares
+  `kv_lora_rank` — isolate the KV LoRA expansion (conventionally `kv_b_proj`, or any `nn.Linear(config.kv_lora_rank, ...)`)
+  in a dedicated method (e.g. `expand_kv`) that `forward()` calls, rather than applying it inline inside `forward()`.
+  This gives external backends (vLLM/SGLang) a single method to override so they can store and consume the compressed
+  KV cache directly instead of materializing the full key/value states. The MLA gate reads companion
+  `configuration_*.py` files to detect the `kv_lora_rank` field; models that intentionally deviate can suppress with
+  `# trf-ignore: TRF020`.
+
 ## [0.1.2] - 2026-07-08
 
 ### Added

@@ -24,6 +24,16 @@ RULE_ID = ""  # Set by discovery
 
 _ATTRIBUTE = "_no_split_modules"
 
+# `torch.nn.utils.parametrize.register_parametrization` (used by `weight_norm`) swaps a module's
+# class for a subclass it builds at runtime, named `"Parametrized" + cls.__name__`. Such a name is
+# what `module.__class__.__name__` reports for a parametrized module, so it is a valid
+# `_no_split_modules` entry even though no source file ever defines the class.
+_DYNAMIC_CLASS_NAME_PREFIX = "Parametrized"
+
+
+def _is_dynamic_class_name(name: str) -> bool:
+    return name.startswith(_DYNAMIC_CLASS_NAME_PREFIX) and len(name) > len(_DYNAMIC_CLASS_NAME_PREFIX)
+
 
 def _local_class_names(tree: ast.Module) -> set[str]:
     """Every class name defined anywhere in *tree* (including inside ``if`` / ``try`` blocks)."""
@@ -122,6 +132,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     violations: list[Violation] = []
     for class_node, element in declared_entries:
         if element.value in known_names:
+            continue
+        if _is_dynamic_class_name(element.value):
             continue
         if element.value in _model_dir_class_names(file_path):
             continue

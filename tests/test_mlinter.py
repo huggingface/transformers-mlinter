@@ -2366,6 +2366,26 @@ class FooPreTrainedModel(LlamaPreTrainedModel):
             self.assertIn("BarDecoderLayer", violations[0].message)
             self.assertEqual(violations[0].line_number, 3)
 
+    def test_trf022_accepts_parametrized_class_created_at_runtime(self):
+        # `torch.nn.utils.parametrize` names its runtime subclasses `Parametrized<cls>`, so no
+        # source file defines them.
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["ParametrizedConv1d"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_flags_bare_parametrized_entry(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["Parametrized"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = self._trf022_violations(file_path, source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("Parametrized", violations[0].message)
+
     def test_trf022_skips_non_model_files(self):
         source = """
 class FooConfig(PreTrainedConfig):

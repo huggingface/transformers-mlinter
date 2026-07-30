@@ -366,3 +366,16 @@ diff = '''
          )
      ).all(-1)
 '''
+
+[rules.TRF022]
+description = "_no_split_modules entries must name module classes that exist in the model."
+default_enabled = true
+allowlist_models = []
+
+[rules.TRF022.explanation]
+what_it_does = "Checks that every string in a `_no_split_modules` list on a class in a `modeling_*.py` file names a class that is defined in that file, imported into it, or defined by a sibling module of the same model directory. Complements TRF005, which only validates the shape of the value. Modular files are skipped because they inherit most classes implicitly."
+why_bad = "`device_map` resolves `_no_split_modules` by comparing the strings to `module.__class__.__name__` at runtime. A stale or misspelled name matches nothing and is silently ignored, so the module it was meant to keep together can still be split across devices. Entries naming another model's classes are also redundant and must be dropped rather than corrected: `post_init` already collects `_no_split_modules` from child submodels, so a submodel's layers are registered automatically."
+diff = '''
+ class VideoLlavaPreTrainedModel(PreTrainedModel):
+-    _no_split_modules = ["VideoLlavaVisionAttention"]
+'''

@@ -29,6 +29,7 @@ from mlinter import mlinter
 from mlinter import trf011 as _trf011_mod
 from mlinter import trf019 as _trf019_mod
 from mlinter import trf020 as _trf020_mod
+from mlinter import trf022 as _trf022_mod
 
 
 TEST_PP_PLAN_MODULES = {"foo": {"embed_tokens", "final_layer_norm", "layers", "norm"}}
@@ -2239,6 +2240,131 @@ class FooProcessor(ProcessorMixin):
         file_path = Path("src/transformers/models/foo/processing_foo.py")
         violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF021})
         self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF021], [])
+
+    # --- TRF022: _no_split_modules entries must name existing classes ---
+
+    def _trf022_violations(self, file_path, source):
+        with patch.object(_trf022_mod, "_MODEL_DIR_CLASS_NAMES", {}):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF022})
+        return [v for v in violations if v.rule_id == mlinter.TRF022]
+
+    def test_trf022_accepts_locally_defined_class(self):
+        source = """
+class FooDecoderLayer(nn.Module):
+    pass
+
+
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooDecoderLayer"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_flags_unknown_module_name(self):
+        source = """
+class FooDecoderLayer(nn.Module):
+    pass
+
+
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooDecoderLayer", "FooVisionAttention"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        trf022 = self._trf022_violations(file_path, source)
+        self.assertEqual(len(trf022), 1)
+        self.assertIn("FooVisionAttention", trf022[0].message)
+        self.assertIn("FooPreTrainedModel", trf022[0].message)
+        self.assertEqual(trf022[0].line_number, 7)
+
+    def test_trf022_accepts_imported_class(self):
+        source = """
+from ..bar.modeling_bar import BarResidualUnit
+
+
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["BarResidualUnit"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_accepts_class_defined_in_sibling_module(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            (model_dir / "vision.py").write_text(
+                "class FooVisionEncoderLayer(nn.Module):\n    pass\n", encoding="utf-8"
+            )
+            source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooVisionEncoderLayer"]
+"""
+            modeling_path = model_dir / "modeling_foo.py"
+            modeling_path.write_text(source, encoding="utf-8")
+            self.assertEqual(self._trf022_violations(modeling_path, source), [])
+
+    def test_trf022_model_dir_index_is_shared_across_modeling_files(self):
+        # The per-directory class index is cached by directory, so it must stay correct no matter
+        # which modeling file of that directory populated it first.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            first_source = """
+class FooTextDecoderLayer(nn.Module):
+    pass
+
+
+class FooTextPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooTextDecoderLayer"]
+"""
+            second_source = """
+class FooAudioPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooTextDecoderLayer"]
+"""
+            first_path = model_dir / "modeling_foo_text.py"
+            second_path = model_dir / "modeling_foo_audio.py"
+            first_path.write_text(first_source, encoding="utf-8")
+            second_path.write_text(second_source, encoding="utf-8")
+
+            with patch.object(_trf022_mod, "_MODEL_DIR_CLASS_NAMES", {}):
+                first = mlinter.analyze_file(first_path, first_source, enabled_rules={mlinter.TRF022})
+                second = mlinter.analyze_file(second_path, second_source, enabled_rules={mlinter.TRF022})
+            self.assertEqual([v for v in first if v.rule_id == mlinter.TRF022], [])
+            self.assertEqual([v for v in second if v.rule_id == mlinter.TRF022], [])
+
+    def test_trf022_skips_modular_files(self):
+        source = """
+class FooPreTrainedModel(LlamaPreTrainedModel):
+    _no_split_modules = ["FooDecoderLayer"]
+"""
+        file_path = Path("src/transformers/models/foo/modular_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_ignores_none_and_malformed_values(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = None
+
+
+class BarPreTrainedModel(PreTrainedModel):
+    _no_split_modules = []
+
+
+class BazPreTrainedModel(PreTrainedModel):
+    _no_split_modules = SOME_CONSTANT
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_respects_suppression_comment(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = [
+        # trf-ignore: TRF022
+        "FooVisionAttention",
+    ]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
 
 
 if __name__ == "__main__":

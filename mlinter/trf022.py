@@ -1,0 +1,137 @@
+# Copyright 2026 The HuggingFace Team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""TRF022: _no_split_modules entries must name module classes that exist in the model."""
+
+import ast
+from pathlib import Path
+
+from ._helpers import Violation, _get_class_assignments, _has_rule_suppression
+
+
+RULE_ID = ""  # Set by discovery
+
+_ATTRIBUTE = "_no_split_modules"
+
+
+def _local_class_names(tree: ast.Module) -> set[str]:
+    """Every class name defined anywhere in *tree* (including inside ``if`` / ``try`` blocks)."""
+    return {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+
+
+def _imported_names(tree: ast.Module) -> set[str]:
+    """Names bound by imports, including `TYPE_CHECKING` and try/except guarded ones."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+    return names
+
+
+def _module_level_aliases(tree: ast.Module) -> set[str]:
+    """Module-level ``Name = ...`` targets, which may alias a class defined elsewhere."""
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            names.update(target.id for target in node.targets if isinstance(target, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+# Model directories hold a handful of Python files, so the per-directory class index is cheap; it is
+# memoized because a directory is re-scanned for every modeling file it contains.
+_MODEL_DIR_CLASS_NAMES: dict[Path, set[str]] = {}
+
+
+def _model_dir_class_names(file_path: Path) -> set[str]:
+    """Class names defined by the sibling modules of *file_path* (same model directory).
+
+    Model packages split implementation across several modules (e.g. `vision.py`, `perceiver.py`,
+    `modeling_<name>_fold.py`). A class defined in a sibling module is still part of the same model,
+    and `device_map` resolves `_no_split_modules` against runtime class names regardless of which
+    module defines them, so those names are accepted.
+    """
+    model_dir = file_path.parent
+    cached = _MODEL_DIR_CLASS_NAMES.get(model_dir)
+    if cached is not None:
+        return cached
+
+    names: set[str] = set()
+    if model_dir.is_dir():
+        # The file under analysis is indexed too: its own classes are already resolved locally, and
+        # including them keeps this per-directory cache independent of which file populated it.
+        for sibling in sorted(model_dir.glob("*.py")):
+            try:
+                sibling_tree = ast.parse(sibling.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, ValueError):
+                continue
+            names.update(_local_class_names(sibling_tree))
+
+    _MODEL_DIR_CLASS_NAMES[model_dir] = names
+    return names
+
+
+def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
+    # Only modeling files declare the classes that `_no_split_modules` names. Modular files
+    # inherit most of their classes implicitly, so the names they reference are only defined in
+    # the generated modeling file and cannot be resolved statically here.
+    if not file_path.name.startswith("modeling_"):
+        return []
+
+    declared_entries: list[tuple[ast.ClassDef, ast.Constant]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
+            continue
+
+        value = _get_class_assignments(node).get(_ATTRIBUTE)
+        if not isinstance(value, (ast.List, ast.Tuple)):
+            # `None`, and malformed values in general, are TRF005's concern.
+            continue
+        for element in value.elts:
+            # Non-string and empty entries are reported by TRF005.
+            if isinstance(element, ast.Constant) and isinstance(element.value, str) and element.value:
+                declared_entries.append((node, element))
+
+    if not declared_entries:
+        return []
+
+    known_names = _local_class_names(tree) | _imported_names(tree) | _module_level_aliases(tree)
+
+    violations: list[Violation] = []
+    for class_node, element in declared_entries:
+        if element.value in known_names:
+            continue
+        if element.value in _model_dir_class_names(file_path):
+            continue
+        if _has_rule_suppression(source_lines, RULE_ID, element.lineno):
+            continue
+        violations.append(
+            Violation(
+                file_path=file_path,
+                line_number=element.lineno,
+                message=(
+                    f"{RULE_ID}: {class_node.name}.{_ATTRIBUTE} lists {element.value!r}, which is not defined or "
+                    f"imported in {file_path.name} and does not exist in the model directory. Either remove the "
+                    "entry, or correct it to the name of the layer class of this model. Do not name classes owned "
+                    "by a submodel (e.g. a language model or vision tower built through `AutoModel`): `post_init` "
+                    "already collects `_no_split_modules` from child submodels automatically."
+                ),
+            )
+        )
+
+    return violations

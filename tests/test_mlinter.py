@@ -2331,12 +2331,47 @@ class FooAudioPreTrainedModel(PreTrainedModel):
             self.assertEqual([v for v in first if v.rule_id == mlinter.TRF022], [])
             self.assertEqual([v for v in second if v.rule_id == mlinter.TRF022], [])
 
-    def test_trf022_skips_modular_files(self):
-        source = """
+    def test_trf022_resolves_modular_names_against_generated_modeling_file(self):
+        # A modular file inherits `FooDecoderLayer` implicitly, so the name only appears in the
+        # generated modeling file. That file is a sibling, so the name must still resolve.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            (model_dir / "modeling_foo.py").write_text(
+                "class FooDecoderLayer(nn.Module):\n    pass\n", encoding="utf-8"
+            )
+            source = """
 class FooPreTrainedModel(LlamaPreTrainedModel):
     _no_split_modules = ["FooDecoderLayer"]
 """
-        file_path = Path("src/transformers/models/foo/modular_foo.py")
+            modular_path = model_dir / "modular_foo.py"
+            modular_path.write_text(source, encoding="utf-8")
+            self.assertEqual(self._trf022_violations(modular_path, source), [])
+
+    def test_trf022_flags_unknown_module_name_in_modular_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            (model_dir / "modeling_foo.py").write_text(
+                "class FooDecoderLayer(nn.Module):\n    pass\n", encoding="utf-8"
+            )
+            source = """
+class FooPreTrainedModel(LlamaPreTrainedModel):
+    _no_split_modules = ["BarDecoderLayer"]
+"""
+            modular_path = model_dir / "modular_foo.py"
+            modular_path.write_text(source, encoding="utf-8")
+            violations = self._trf022_violations(modular_path, source)
+            self.assertEqual(len(violations), 1)
+            self.assertIn("BarDecoderLayer", violations[0].message)
+            self.assertEqual(violations[0].line_number, 3)
+
+    def test_trf022_skips_non_model_files(self):
+        source = """
+class FooConfig(PreTrainedConfig):
+    _no_split_modules = ["FooDecoderLayer"]
+"""
+        file_path = Path("src/transformers/models/foo/configuration_foo.py")
         self.assertEqual(self._trf022_violations(file_path, source), [])
 
     def test_trf022_ignores_none_and_malformed_values(self):

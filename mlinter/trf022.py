@@ -63,6 +63,10 @@ def _model_dir_class_names(file_path: Path) -> set[str]:
     `modeling_<name>_fold.py`). A class defined in a sibling module is still part of the same model,
     and `device_map` resolves `_no_split_modules` against runtime class names regardless of which
     module defines them, so those names are accepted.
+
+    This is also what makes `modular_*.py` checkable. A modular file inherits most of its classes
+    implicitly, so their names are absent from its own tree, but the `modeling_*.py` file generated
+    from it spells every one of them out — and it is a sibling, so it is indexed here.
     """
     model_dir = file_path.parent
     cached = _MODEL_DIR_CLASS_NAMES.get(model_dir)
@@ -85,10 +89,13 @@ def _model_dir_class_names(file_path: Path) -> set[str]:
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
-    # Only modeling files declare the classes that `_no_split_modules` names. Modular files
-    # inherit most of their classes implicitly, so the names they reference are only defined in
-    # the generated modeling file and cannot be resolved statically here.
-    if not file_path.name.startswith("modeling_"):
+    # `_no_split_modules` only ever appears on model classes, so skip the configuration and
+    # processor files the driver also feeds in. Modular files are checked as well: the classes they
+    # inherit implicitly are materialized in the generated `modeling_*.py` sibling, which
+    # `_model_dir_class_names` indexes. Reporting there rather than on the generated file matters,
+    # because the driver skips generated files (an edit to one is overwritten on regeneration), so
+    # a modular-based model would otherwise never be checked at all.
+    if not file_path.name.startswith(("modeling_", "modular_")):
         return []
 
     declared_entries: list[tuple[ast.ClassDef, ast.Constant]] = []

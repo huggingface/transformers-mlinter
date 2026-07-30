@@ -2140,10 +2140,25 @@ class FooModel(FooPreTrainedModel):
 class FooModel(FooPreTrainedModel):
     def forward(self, inputs_embeds):
         pinned = torch.tensor(0.0, device="cpu")
+        indexed = torch.tensor(0.0, device="cpu:0")
+        wrapped = torch.tensor(0.0, device=torch.device("cpu"))
+        keyworded = torch.tensor(0.0, device=torch.device(type="cpu"))
         hostside = torch.tensor(0.0)
-        return pinned, hostside
+        return pinned, indexed, wrapped, keyworded, hostside
 """
         self.assertEqual(self._trf021(modeling_source), [])
+
+    def test_trf021_flags_accelerator_whose_name_contains_cpu(self):
+        # The host check matches the device type exactly, so a backend merely containing "cpu" in
+        # its name is still an accelerator and the copy still breaks graph capture.
+        modeling_source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, inputs_embeds):
+        named = torch.tensor(0.0, device="mycpu")
+        wrapped = torch.tensor(0.0, device=torch.device("cpuplus:0"))
+        return named, wrapped
+"""
+        self.assertEqual(len(self._trf021(modeling_source)), 2)
 
     def test_trf021_skips_construction_time_methods(self):
         modeling_source = """

@@ -16,6 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   KV cache directly instead of materializing the full key/value states. The MLA gate reads companion
   `configuration_*.py` files to detect the `kv_lora_rank` field; models that intentionally deviate can suppress with
   `# trf-ignore: TRF020`.
+- Added `TRF021`, which flags `torch.tensor(<scalar>, ..., device=<non-cpu>)` in `modeling_*.py` and `modular_*.py`.
+  Building a 0-d tensor that way materializes the value on the host and then issues a host-to-device copy, which CUDA
+  graph capture forbids; `torch.full((), <scalar>, dtype=..., device=...)` fills the same tensor directly on-device.
+  The rule only fires when the value provably resolves to a Python scalar — numeric literals and arithmetic over them,
+  `torch.finfo`/`torch.iinfo` fields, scalar builtins and `math.*` calls, locals bound exactly once, `self.<attr>`
+  assigned in the class body, and `self.config.<field>` / `config.<field>` annotated `int`/`float`/`bool` in the
+  companion `configuration_*.py`. Fields that may also be sequences (e.g. `eos_token_id: int | list[int] | None`) and
+  unresolvable expressions are left alone, as are construction-time methods (`__init__`, `_init_weights`,
+  `__post_init__`, `post_init`). Suppress with `# trf-ignore: TRF021`.
+- Shared the companion-config resolution helpers (`_find_config_file`, `_parse_config_classes`,
+  `_resolve_config_class_name_from_modeling_class`, `_resolve_target_config_class_name`) by moving them from `TRF015`
+  into `mlinter/_helpers.py`, so cross-file rules resolve a modeling class to its target config class the same way.
 
 ## [0.1.2] - 2026-07-08
 

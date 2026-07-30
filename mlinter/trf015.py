@@ -20,7 +20,11 @@ from pathlib import Path
 from ._helpers import (
     Violation,
     _collect_class_bases,
+    _find_config_file,
     _get_class_assignments,
+    _parse_config_classes,
+    _resolve_config_class_name_from_modeling_class,
+    _resolve_target_config_class_name,
     _simple_name,
     full_name,
     iter_pretrained_classes,
@@ -38,16 +42,6 @@ def _is_non_empty_collection(node: ast.AST) -> bool:
     if isinstance(node, (ast.List, ast.Set, ast.Tuple)):
         return len(node.elts) > 0
     return False
-
-
-def _parse_config_classes(config_path: Path) -> dict[str, ast.ClassDef] | None:
-    try:
-        source = config_path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(config_path))
-    except (OSError, SyntaxError):
-        return None
-
-    return {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
 
 
 def _class_has_tie_word_embeddings(config_node: ast.ClassDef) -> bool:
@@ -81,93 +75,6 @@ def _class_has_tie_word_embeddings(config_node: ast.ClassDef) -> bool:
     return False
 
 
-def _annotated_config_class_name(class_node: ast.ClassDef) -> str | None:
-    for item in class_node.body:
-        if not isinstance(item, ast.AnnAssign) or not isinstance(item.target, ast.Name) or item.target.id != "config":
-            continue
-
-        annotation = item.annotation
-        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
-            annotation_name = _simple_name(annotation.value)
-        else:
-            try:
-                annotation_name = _simple_name(full_name(annotation))
-            except ValueError:
-                continue
-
-        if annotation_name.endswith("Config"):
-            return annotation_name
-
-    return None
-
-
-def _resolve_config_class_name_from_modeling_class(
-    class_name: str,
-    class_to_bases: dict[str, list[str]],
-    class_to_assignments: dict[str, dict[str, ast.AST]],
-    class_to_nodes: dict[str, ast.ClassDef],
-) -> str | None:
-    def _resolve(name: str, visiting: set[str]) -> str | None:
-        if name in visiting:
-            return None
-        visiting.add(name)
-
-        assignments = class_to_assignments.get(name, {})
-        config_class = assignments.get("config_class")
-        if config_class is not None:
-            if isinstance(config_class, ast.Constant) and isinstance(config_class.value, str):
-                return config_class.value
-            try:
-                return _simple_name(full_name(config_class))
-            except ValueError:
-                pass
-
-        class_node = class_to_nodes.get(name)
-        if class_node is not None:
-            annotated_config = _annotated_config_class_name(class_node)
-            if annotated_config is not None:
-                return annotated_config
-
-        for base_name in class_to_bases.get(name, []):
-            if base_name not in class_to_assignments:
-                continue
-            resolved = _resolve(base_name, visiting)
-            if resolved is not None:
-                return resolved
-
-        return None
-
-    return _resolve(class_name, set())
-
-
-def _infer_config_class_name(model_class_name: str, config_class_names: list[str]) -> str | None:
-    candidates = []
-    for config_class_name in config_class_names:
-        if not config_class_name.endswith("Config"):
-            continue
-        config_stem = config_class_name.removesuffix("Config")
-        if model_class_name.startswith(config_stem):
-            candidates.append((len(config_stem), config_class_name))
-
-    if not candidates:
-        return None
-
-    return max(candidates)[1]
-
-
-def _resolve_target_config_class_name(
-    config_classes: dict[str, ast.ClassDef], model_class_name: str, config_class_name: str | None
-) -> str | None:
-    target_config_name = config_class_name
-    if target_config_name not in config_classes:
-        target_config_name = _infer_config_class_name(model_class_name, list(config_classes))
-
-    if target_config_name not in config_classes:
-        return None
-
-    return target_config_name
-
-
 def _config_has_tie_word_embeddings(
     config_classes: dict[str, ast.ClassDef], model_class_name: str, config_class_name: str | None
 ) -> bool:
@@ -180,21 +87,6 @@ def _config_has_tie_word_embeddings(
         return True
 
     return _class_has_tie_word_embeddings(target_config)
-
-
-def _find_config_file(file_path: Path) -> Path | None:
-    model_dir = file_path.parent
-    file_name = file_path.name
-    for prefix in ("modeling_", "modular_"):
-        if file_name.startswith(prefix):
-            suffix = file_name[len(prefix) :]
-            exact = model_dir / f"configuration_{suffix}"
-            if exact.exists():
-                return exact
-            break
-
-    candidates = sorted(model_dir.glob("configuration_*.py"))
-    return candidates[0] if candidates else None
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:

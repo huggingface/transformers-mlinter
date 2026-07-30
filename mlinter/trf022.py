@@ -35,6 +35,14 @@ def _is_dynamic_class_name(name: str) -> bool:
     return name.startswith(_DYNAMIC_CLASS_NAME_PREFIX) and len(name) > len(_DYNAMIC_CLASS_NAME_PREFIX)
 
 
+# Classes that live outside the model directory but are still legitimate entries. A timm backbone is
+# built from third-party classes whose names transformers does not control, so the `TimmWrapper*`
+# class is the smallest unit a timm-backed model can name -- which is why `timm_wrapper` itself sets
+# `_no_split_modules = ["TimmWrapperModel"]`. Models embedding such a backbone name the wrapper for
+# the same reason, so those names resolve from any model directory.
+_EXTERNAL_CLASS_NAMES = frozenset({"TimmWrapperForImageClassification"})
+
+
 def _local_class_names(tree: ast.Module) -> set[str]:
     """Every class name defined anywhere in *tree* (including inside ``if`` / ``try`` blocks)."""
     return {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
@@ -133,7 +141,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     for class_node, element in declared_entries:
         if element.value in known_names:
             continue
-        if _is_dynamic_class_name(element.value):
+        if _is_dynamic_class_name(element.value) or element.value in _EXTERNAL_CLASS_NAMES:
             continue
         if element.value in _model_dir_class_names(file_path):
             continue

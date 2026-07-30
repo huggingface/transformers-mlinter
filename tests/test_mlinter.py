@@ -2386,6 +2386,20 @@ class FooPreTrainedModel(PreTrainedModel):
         self.assertEqual(len(violations), 1)
         self.assertIn("Parametrized", violations[0].message)
 
+    def test_trf022_accepts_timm_wrapper_class_from_another_model_directory(self):
+        # A timm backbone is built from third-party classes, so the wrapper is the smallest unit a
+        # timm-backed model can name -- even though it lives in the `timm_wrapper` directory.
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooEncoderLayer", "TimmWrapperForImageClassification"]
+
+
+class FooEncoderLayer(nn.Module):
+    pass
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
     def test_trf022_skips_non_model_files(self):
         source = """
 class FooConfig(PreTrainedConfig):

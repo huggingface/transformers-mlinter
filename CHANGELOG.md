@@ -25,12 +25,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   companion `configuration_*.py`. Fields that may also be sequences (e.g. `eos_token_id: int | list[int] | None`) and
   unresolvable expressions are left alone, as are construction-time methods (`__init__`, `_init_weights`,
   `__post_init__`, `post_init`). Suppress with `# trf-ignore: TRF021`.
-- Added `TRF022`, which flags `_no_split_modules` entries naming a class that does not exist in the model. A name is
-  resolved against the classes defined in the `modeling_*.py` file, the names it imports, and the classes defined by
-  sibling modules of the same model directory. Entries naming another model's
-  classes are flagged: `post_init` already collects `_no_split_modules` from child submodels, so hardcoding them
-  is redundant. Only `modeling_*.py` files are checked — modular files inherit most of their classes implicitly, so
-  their references cannot be resolved statically. Complements `TRF005`, which only validates the shape of the value.
+- Added `TRF022`, which flags `_no_split_modules` entries naming a class that does not exist in the model. Names are
+  resolved against the classes defined or imported in the `modeling_*.py` / `modular_*.py` file and those defined by
+  sibling modules of the same model directory. Entries naming another model's classes are flagged too: `post_init`
+  already collects `_no_split_modules` from child submodels. Complements `TRF005`, which only validates the shape of
+  the value. Suppress with `# trf-ignore: TRF022`.
 - Shared the companion-config resolution helpers (`_find_config_file`, `_parse_config_classes`,
   `_resolve_config_class_name_from_modeling_class`, `_resolve_target_config_class_name`) by moving them from `TRF015`
   into `mlinter/_helpers.py`, so cross-file rules resolve a modeling class to its target config class the same way.

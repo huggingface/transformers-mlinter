@@ -116,7 +116,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     if not file_path.name.startswith(("modeling_", "modular_")):
         return []
 
-    declared_entries: list[tuple[ast.ClassDef, ast.Constant]] = []
+    # The entry name is carried alongside the node so the string narrowing below survives.
+    declared_entries: list[tuple[ast.ClassDef, ast.Constant, str]] = []
     for node in tree.body:
         if not isinstance(node, ast.ClassDef):
             continue
@@ -130,7 +131,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         for element in value.elts:
             # Non-string and empty entries are reported by TRF005.
             if isinstance(element, ast.Constant) and isinstance(element.value, str) and element.value:
-                declared_entries.append((node, element))
+                declared_entries.append((node, element, element.value))
 
     if not declared_entries:
         return []
@@ -138,12 +139,12 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     known_names = _local_class_names(tree) | _imported_names(tree) | _module_level_aliases(tree)
 
     violations: list[Violation] = []
-    for class_node, element in declared_entries:
-        if element.value in known_names:
+    for class_node, element, name in declared_entries:
+        if name in known_names:
             continue
-        if _is_dynamic_class_name(element.value) or element.value in _EXTERNAL_CLASS_NAMES:
+        if _is_dynamic_class_name(name) or name in _EXTERNAL_CLASS_NAMES:
             continue
-        if element.value in _model_dir_class_names(file_path):
+        if name in _model_dir_class_names(file_path):
             continue
         if _has_rule_suppression(source_lines, RULE_ID, element.lineno):
             continue
@@ -152,7 +153,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                 file_path=file_path,
                 line_number=element.lineno,
                 message=(
-                    f"{RULE_ID}: {class_node.name}.{_ATTRIBUTE} lists {element.value!r}, which is not defined or "
+                    f"{RULE_ID}: {class_node.name}.{_ATTRIBUTE} lists {name!r}, which is not defined or "
                     f"imported in {file_path.name} and does not exist in the model directory. Either remove the "
                     "entry, or correct it to the name of the layer class of this model. Do not name classes owned "
                     "by a submodel (e.g. a language model or vision tower built through `AutoModel`): `post_init` "

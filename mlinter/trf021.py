@@ -100,12 +100,28 @@ def _device_keyword(call: ast.Call) -> ast.AST | None:
     return None
 
 
+def _is_cpu_device_string(value: str) -> bool:
+    """Whether a PyTorch device string names the host, i.e. ``cpu`` or an indexed ``cpu:0``.
+
+    Matched on the device type alone rather than as a substring, so a custom backend whose name
+    merely contains "cpu" is not mistaken for the host.
+    """
+    return value.strip().lower().split(":")[0] == "cpu"
+
+
 def _is_cpu_device(node: ast.AST) -> bool:
     """Whether *node* pins the tensor to the host, in which case there is no host->device copy."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return "cpu" in node.value.lower()
+        return _is_cpu_device_string(node.value)
+    # torch.device("cpu"), torch.device("cpu", 0), torch.device(type="cpu")
     if isinstance(node, ast.Call):
-        return any(_is_cpu_device(arg) for arg in node.args)
+        arguments = list(node.args) + [keyword.value for keyword in node.keywords if keyword.arg == "type"]
+        return any(
+            isinstance(argument, ast.Constant)
+            and isinstance(argument.value, str)
+            and _is_cpu_device_string(argument.value)
+            for argument in arguments
+        )
     return False
 
 

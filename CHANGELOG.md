@@ -40,11 +40,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   also tries the hyphenated spelling of the model directory (`blenderbot_small` → `blenderbot-small.md`), which
   grandfathers models whose doc page uses hyphens instead of leaving them permanently unexempt.
 
-### Fixed
-
-- Removed a stale `# type: ignore[union-attr]` in `TRF019` that `ty` reported as an unused suppression, so
-  `make typecheck` is clean.
-
 - Added `TRF020`, which enforces that Multi-head Latent Attention (MLA) models — those whose configuration declares
   `kv_lora_rank` — isolate the KV LoRA expansion (conventionally `kv_b_proj`, or any `nn.Linear(config.kv_lora_rank, ...)`)
   in a dedicated method (e.g. `expand_kv`) that `forward()` calls, rather than applying it inline inside `forward()`.
@@ -64,6 +59,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Shared the companion-config resolution helpers (`_find_config_file`, `_parse_config_classes`,
   `_resolve_config_class_name_from_modeling_class`, `_resolve_target_config_class_name`) by moving them from `TRF015`
   into `mlinter/_helpers.py`, so cross-file rules resolve a modeling class to its target config class the same way.
+
+### Fixed
+
+- Removed a stale `# type: ignore[union-attr]` in `TRF019` that `ty` reported as an unused suppression, so
+  `make typecheck` is clean.
 
 ## [0.1.2] - 2026-07-08
 

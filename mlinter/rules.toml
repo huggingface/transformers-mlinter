@@ -366,3 +366,98 @@ diff = '''
          )
      ).all(-1)
 '''
+
+[rules.TRF022]
+description = "Config fields must use canonical dimension names (hidden_size, intermediate_size, num_attention_heads, ...)."
+default_enabled = true
+# openai -> openai-gpt.md and kosmos2 -> kosmos-2.md cannot be derived from the directory name, so the
+# cutoff cannot grandfather them. qwen3_asr mirrors Whisper's encoder config, where d_model is public API.
+allowlist_models = ["kosmos2", "openai", "qwen3_asr"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF022.explanation]
+what_it_does = "In configuration_*.py and modular_*.py, checks classes whose name ends in Config for fields declared under an upstream paper's abbreviation instead of the library's canonical name: d_model/n_embd (hidden_size), d_ff/d_inner/ffn_dim/ffn_hidden_size/expansion_ratio (intermediate_size), d_head (head_dim), n_head/n_heads (num_attention_heads), n_layer/n_layers/num_blocks (num_hidden_layers). Fields are collected from the class body and from __init__/__post_init__ assignments and signature defaults. Ambiguous names that are still idiomatic in parts of the library (num_heads, num_layers, embed_dim, mlp_ratio) are deliberately not flagged. Models contributed before cutoff_date keep their existing names."
+why_bad = "Every generic that reads a model's shape — device_map planning, tensor/pipeline parallel plans, quantization, PEFT, attention-backend selection, `attribute_map` consumers — looks up the canonical names. A config that spells the same quantity `d_model` silently opts out of all of it, and the mismatch has to be rediscovered by a reviewer on every single new model. Derive the checkpoint's own spelling in the conversion script instead."
+diff = '''
+ @strict(accept_kwargs=True)
+ class AcmeConfig(PreTrainedConfig):
+-    d_model: int = 1024
+-    d_ff: int = 4096
+-    n_heads: int = 16
+-    n_layers: int = 24
++    hidden_size: int = 1024
++    intermediate_size: int = 4096
++    num_attention_heads: int = 16
++    num_hidden_layers: int = 24
+'''
+
+[rules.TRF023]
+description = "Layer dimensions must come from the config, not from an integer literal in the modeling file."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF023.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, checks torch.nn layer constructors (Linear, Embedding, LayerNorm, RMSNorm, GroupNorm, BatchNorm*, InstanceNorm*, Conv*d, ConvTranspose*d, Bilinear, MultiheadAttention) for an integer literal greater than 8 in a dimension position, whether passed positionally or by keyword (in_features, out_features, in_channels, out_channels, num_embeddings, embedding_dim, embed_dim, normalized_shape, num_channels, hidden_size). Operator-shape arguments such as kernel_size, stride, padding and num_groups are ignored, and literals up to 8 are allowed so scalar heads, binary classifiers and RGB channel counts stay clean. Models contributed before cutoff_date are exempt."
+why_bad = "A hardcoded width silently pins the module to one checkpoint size: the same architecture at another scale loads with a shape mismatch, and `from_pretrained` cannot report which value is wrong because there is no config field to point at. It also splits the source of truth, so a config that is edited no longer describes the model that gets built."
+diff = '''
+ class AcmeAtomEmbedding(nn.Module):
+     def __init__(self, config):
+         super().__init__()
+-        self.proj = nn.Linear(768, 3072, bias=False)
+-        self.norm = nn.LayerNorm(3072)
++        self.proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
++        self.norm = nn.LayerNorm(config.intermediate_size)
+'''
+
+[rules.TRF024]
+description = "Attention masks must be built once in the model, not rebuilt inside a layer or attention module."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF024.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, checks calls to a mask factory (the masking_utils entry points create_causal_mask, create_bidirectional_mask, create_sliding_window_causal_mask, create_chunked_causal_mask, create_masks_for_generate, and any create_*_mask helper) that occur inside a class which does not inherit from PreTrainedModel. Top-level models and sub-models are where masks are meant to be created, so only plain nn.Module blocks — layers, attention modules, encoders — are in scope."
+why_bad = "Mask construction is O(sequence length squared) work that does not vary per layer. Building it inside the layer repeats that cost once per layer, and because each layer then owns its own mask, the attention backends can no longer be given a single prepared mask — which is how manual padding fixups and per-layer mask divergence get introduced. Create it once in the model and pass it down."
+diff = '''
+ class AcmeLayer(nn.Module):
+     def forward(self, hidden_states, attention_mask=None, **kwargs):
+-        attention_mask = create_causal_mask(
+-            config=self.config, input_embeds=hidden_states, attention_mask=attention_mask, ...
+-        )
+         return self.self_attn(hidden_states, attention_mask, **kwargs)
+
+ class AcmeModel(AcmePreTrainedModel):
+     def forward(self, input_ids=None, attention_mask=None, **kwargs):
++        causal_mask = create_causal_mask(
++            config=self.config, input_embeds=inputs_embeds, attention_mask=attention_mask, ...
++        )
+         for layer in self.layers:
+-            hidden_states = layer(hidden_states, attention_mask, **kwargs)
++            hidden_states = layer(hidden_states, causal_mask, **kwargs)
+'''
+
+[rules.TRF025]
+description = "A module whose forward only delegates to its single submodule adds nothing; inline it."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF025.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags a class that is not a PreTrainedModel subclass, defines only __init__ and forward, assigns exactly one self.<attr> in __init__, and whose forward body is exactly `return self.<attr>(...)` for that same attribute. A leading docstring is ignored. Classes with any other method, any additional attribute, or any statement before the return are left alone because they do work of their own."
+why_bad = "The wrapper adds a level to every weight name and to _no_split_modules, tensor-parallel and pipeline plans, and to every conversion mapping, while contributing no computation. Readers then have to open one more class to discover that nothing happens in it, which is the single most common structural review comment on new models. PreTrainedModel subclasses are exempt: those exist for from_pretrained and the auto classes even when the forward only delegates."
+diff = '''
+-class AcmeAtomTransformer(nn.Module):
+-    def __init__(self, config):
+-        super().__init__()
+-        self.encoder = AcmeEncoder(config)
+-
+-    def forward(self, hidden_states, **kwargs):
+-        return self.encoder(hidden_states, **kwargs)
+-
+ class AcmeModel(AcmePreTrainedModel):
+     def __init__(self, config):
+         super().__init__(config)
+-        self.atom_transformer = AcmeAtomTransformer(config)
++        self.encoder = AcmeEncoder(config)
+'''

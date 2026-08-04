@@ -9,6 +9,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Added `TRF022`, which flags config fields declared under an upstream paper's abbreviation instead of the library's
+  canonical name: `d_model`/`n_embd` (→ `hidden_size`), `d_ff`/`d_inner`/`ffn_dim`/`ffn_hidden_size`/`expansion_ratio`
+  (→ `intermediate_size`), `d_head` (→ `head_dim`), `n_head`/`n_heads` (→ `num_attention_heads`),
+  `n_layer`/`n_layers`/`num_blocks` (→ `num_hidden_layers`). Fields are collected from the class body and from
+  `__init__`/`__post_init__` assignments and signature defaults, and each legacy name is reported once per class.
+  Names that remain idiomatic in parts of the library (`num_heads`, `num_layers`, `embed_dim`, `mlp_ratio`) are
+  deliberately not flagged. `cutoff_date` grandfathers the ~78 models that predate the convention; `kosmos2` and
+  `openai` are allowlisted because their doc pages (`kosmos-2.md`, `openai-gpt.md`) cannot be derived from the
+  directory name, and `qwen3_asr` because its encoder config mirrors Whisper's public `d_model`.
+- Added `TRF023`, which flags `torch.nn` layer constructors built with an integer literal greater than 8 in a
+  dimension position — positionally or by keyword — in `modeling_*.py` and `modular_*.py`. Covers `Linear`,
+  `LazyLinear`, `Bilinear`, `Embedding`, `EmbeddingBag`, `LayerNorm`, `RMSNorm`, `GroupNorm`, `BatchNorm*`,
+  `InstanceNorm*`, `Conv*d`, `ConvTranspose*d` and `MultiheadAttention`. Operator-shape arguments (`kernel_size`,
+  `stride`, `padding`, `num_groups`) are ignored and literals up to 8 are allowed, so scalar heads, binary
+  classifiers and RGB channel counts stay clean. A hardcoded width pins the module to one checkpoint size and splits
+  the source of truth away from the config.
+- Added `TRF024`, which flags mask factories (`create_causal_mask`, `create_bidirectional_mask`,
+  `create_sliding_window_causal_mask`, `create_chunked_causal_mask`, `create_masks_for_generate`, and any
+  `create_*_mask` helper) called from a class whose name ends in `Layer`, `Attention` or `Block`. Mask construction
+  does not vary per layer, so building it inside the layer repeats quadratic work and leaves each layer owning its
+  own mask. Models and encoders that build the mask once and pass it down are not in scope.
+- Added `TRF025`, which flags a non-`PreTrainedModel` class that defines only `__init__` and `forward`, assigns
+  exactly one `self.<attr>` in `__init__`, and whose `forward` body is exactly `return self.<attr>(...)` for that
+  attribute. The wrapper adds a level to every weight name, to `_no_split_modules`, to the parallelism plans and to
+  every conversion mapping while contributing no computation. `PreTrainedModel` subclasses are exempt because they
+  exist for `from_pretrained` and the auto classes even when the forward only delegates.
+- Moved `model_contribution_date` (and `DOCS_ROOT`) from `TRF019` into `mlinter/_helpers.py` and added
+  `is_exempt_by_cutoff`, so every cutoff-gated rule resolves a model's contribution date the same way. The lookup now
+  also tries the hyphenated spelling of the model directory (`blenderbot_small` → `blenderbot-small.md`), which
+  grandfathers models whose doc page uses hyphens instead of leaving them permanently unexempt.
+
+### Fixed
+
+- Removed a stale `# type: ignore[union-attr]` in `TRF019` that `ty` reported as an unused suppression, so
+  `make typecheck` is clean.
+
 - Added `TRF020`, which enforces that Multi-head Latent Attention (MLA) models — those whose configuration declares
   `kv_lora_rank` — isolate the KV LoRA expansion (conventionally `kv_b_proj`, or any `nn.Linear(config.kv_lora_rank, ...)`)
   in a dedicated method (e.g. `expand_kv`) that `forward()` calls, rather than applying it inline inside `forward()`.

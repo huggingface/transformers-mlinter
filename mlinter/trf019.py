@@ -15,22 +15,16 @@
 """TRF019: `ProcessorKwargs` must not define non-empty `_defaults`; move them in `processor_config.json` in the hub."""
 
 import ast
-import re
 from datetime import date
 from pathlib import Path
 
-from ._helpers import Violation, _has_rule_suppression, _model_dir_name
+from ._helpers import DOCS_ROOT, Violation, _has_rule_suppression, model_contribution_date
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
 
-DOCS_ROOT = Path("docs/source/en/model_doc")
-
-_CONTRIBUTION_DATE_RE = re.compile(
-    r"\n\*This model was (?:published in HF papers on (.*) and )?"
-    r"contributed to Hugging Face Transformers on (\d{4}-\d{2}-\d{2})\.\*"
-)
+__all__ = ["DOCS_ROOT", "check", "model_contribution_date"]
 
 
 def _is_processing_file(file_path: Path) -> bool:
@@ -51,20 +45,6 @@ def _defaults_assignment(class_node: ast.ClassDef) -> ast.stmt | None:
 
 def _is_non_empty_dict(node: ast.AST) -> bool:
     return isinstance(node, ast.Dict) and len(node.keys) > 0
-
-
-def model_contribution_date(file_path: Path) -> date | None:
-    """Return the Transformers contribution date from the model's doc page, or None if not found."""
-    model_name = _model_dir_name(file_path)
-    if model_name is None:
-        return None
-    doc_path = DOCS_ROOT / f"{model_name}.md"
-    try:
-        text = doc_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    match = _CONTRIBUTION_DATE_RE.search(text)
-    return date.fromisoformat(match.group(2)) if match is not None else match
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
@@ -92,7 +72,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         if stmt is None:
             continue
 
-        value = stmt.value  # type: ignore[union-attr]
+        value = stmt.value
         if not _is_non_empty_dict(value):
             continue
 

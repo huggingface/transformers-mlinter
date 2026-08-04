@@ -29,7 +29,7 @@ from typing import cast
 from rich import print
 from rich.console import Console
 
-from ._helpers import MODELS_ROOT, Violation, _model_dir_name
+from ._helpers import GENERATED_FILE_MARKER, MODELS_ROOT, Violation, _model_dir_name, read_file_head
 from ._version import __version__
 
 
@@ -215,10 +215,6 @@ def _rule_id_from_module_name(name: str) -> str | None:
     return name.upper()
 
 
-# Banner that the modular converter writes near the top of every file it generates.
-_GENERATED_FILE_MARKER = "This file was automatically generated from"
-
-
 def _is_generated_file(path: Path) -> bool:
     """Whether ``path`` is a derived file produced from a ``modular_*.py`` source.
 
@@ -227,12 +223,8 @@ def _is_generated_file(path: Path) -> bool:
     modular source is linted instead, so scanning them only produces violations that cannot be
     fixed in place (edits get overwritten on the next generation).
     """
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            head = handle.read(1024)
-    except OSError:
-        return False
-    return _GENERATED_FILE_MARKER in head
+    head = read_file_head(path)
+    return head is not None and GENERATED_FILE_MARKER in head
 
 
 def iter_modeling_files(paths: set[Path] | None = None):

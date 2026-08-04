@@ -666,7 +666,8 @@ diff = '''
 [rules.TRF052]
 description = "Public model, config, output and processor classes and their public methods must be decorated with @auto_docstring."
 default_enabled = true
-allowlist_models = []
+# no contribution date
+allowlist_models = ["kosmos2", "timm_backbone", "timm_wrapper", "vitpose_backbone", "wav2vec2_with_lm", "x_clip"]
 cutoff_date = "2026-06-20"
 
 [rules.TRF052.explanation]

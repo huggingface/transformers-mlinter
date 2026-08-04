@@ -35,6 +35,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   attribute. The wrapper adds a level to every weight name, to `_no_split_modules`, to the parallelism plans and to
   every conversion mapping while contributing no computation. `PreTrainedModel` subclasses are exempt because they
   exist for `from_pretrained` and the auto classes even when the forward only delegates.
+- Added `TRF026`, which flags bare `assert` in `modeling_*.py`, `modular_*.py` and `configuration_*.py`. `python -O`
+  strips asserts, so a shape or config check written that way silently disappears, and an `AssertionError` tells the
+  user nothing actionable.
+- Added `TRF027`, which requires the Apache 2.0 license header in the first 25 lines of `modeling_*.py`,
+  `modular_*.py`, `configuration_*.py`, `processing_*.py`, `image_processing_*.py` and `video_processing_*.py`.
+- Added `TRF028`, which flags an `__init__` accepting `config` alongside an argument that is unambiguously a config
+  field (`hidden_size`, `num_attention_heads`, `intermediate_size`, `head_dim`, `embed_dim`, `dropout`, `eps`,
+  `patch_size`, `rope_theta`, ...). The value then has two sources of truth and the caller decides which wins.
+  `kosmos2` is allowlisted because its doc page (`kosmos-2.md`) is not derivable from the directory name.
+- Added `TRF029`, which flags attribute chains rooted at `config`/`self.config` that go three or more levels deep.
+  One hop (`config.hidden_size`) and two (`config.text_config.hidden_size`) are the normal sub-config accesses;
+  deeper means the module should have been handed a sub-config. Reported once per line.
+- Added `TRF030`, which flags a top-level `@dataclass` in a modeling file whose bases carry no `Output` name. A plain
+  dataclass does not index like a tuple, does not survive `return_dict=False`, and is invisible to `@auto_docstring`.
+  Any `BaseModelOutputWith*` base counts as satisfying the rule.
+- Added `TRF031`, which flags `masked_fill`, `masked_fill_`, `full`, `full_like` and `new_full` called with a negated
+  literal of magnitude 1e3 or more. A hardcoded `-1e9` overflows to `-inf` in float16 and is not the float32 minimum,
+  so the mask behaves differently per dtype; `torch.finfo(dtype).min` is correct in all of them.
+- Added `TRF032`, which flags `set_*` methods other than the `PreTrainedModel` contract ones
+  (`set_input_embeddings`, `set_output_embeddings`, `set_decoder`, `set_encoder`, `set_attn_implementation`,
+  `set_default_language`). A hyperparameter behind a setter is not in the config, so it is not saved, not restored by
+  `from_pretrained`, and invisible to device-map and parallelism planning.
+- Added `TRF033`, which flags a locally-defined class ending in `Layer`/`Block`, instantiated inside an
+  `nn.ModuleList(...)`, that does not reach `GradientCheckpointingLayer` through its local base chain.
+  `gradient_checkpointing_enable()` skips plain `nn.Module` layers silently, so training appears to checkpoint and
+  still allocates full activations. ModuleLists of experts, heads or projections are out of scope. Ten models are
+  allowlisted; the list is in the TOML.
+- Added `TRF034`, which flags `# noqa` in `modeling_*.py`, `modular_*.py` and `configuration_*.py`, reporting the
+  suppressed codes when they are given. Three models are allowlisted.
+- Added `TRF035`, which flags `nn.Sequential(...)` in modeling files. Sequential names its children by position, so
+  weights land at `mlp.0.weight`, and every conversion mapping and parallelism plan has to reference indices.
+  `x_clip` is allowlisted.
+- Added `TRF036`, which flags `einsum` in modeling files and reports the equation when it is a literal.
+  **Disabled by default** — einsum is occasionally the clearest way to write a contraction, so this is opt-in via
+  `--enable-rules TRF036` rather than a hard convention. `x_clip` is allowlisted.
+- Added `call_leaf_name` to `mlinter/_helpers.py`: resolves the final identifier of a call target through a chained
+  call, which `full_name` cannot render because the base is itself a `Call`. Rules matching on a tensor method name
+  need this — `x.masked_fill(...).masked_fill(...)` otherwise only ever matches the innermost call.
 - Moved `model_contribution_date` (and `DOCS_ROOT`) from `TRF019` into `mlinter/_helpers.py` and added
   `is_exempt_by_cutoff`, so every cutoff-gated rule resolves a model's contribution date the same way. The lookup now
   also tries the hyphenated spelling of the model directory (`blenderbot_small` → `blenderbot-small.md`), which

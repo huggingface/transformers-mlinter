@@ -15,11 +15,19 @@
 """Shared AST helper functions used across mlinter rule modules."""
 
 import ast
+import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 
 MODELS_ROOT = Path("src/transformers/models")
+DOCS_ROOT = Path("docs/source/en/model_doc")
+
+_CONTRIBUTION_DATE_RE = re.compile(
+    r"\n\*This model was (?:published in HF papers on (.*) and )?"
+    r"contributed to Hugging Face Transformers on (\d{4}-\d{2}-\d{2})\.\*"
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +67,37 @@ def _model_dir_name(file_path: Path) -> str | None:
 
 def _known_model_dirs() -> set[str]:
     return {path.name for path in MODELS_ROOT.iterdir() if path.is_dir()}
+
+
+def model_contribution_date(file_path: Path) -> date | None:
+    """Return the Transformers contribution date from the model's doc page, or None if not found."""
+    model_name = _model_dir_name(file_path)
+    if model_name is None:
+        return None
+    # Doc pages usually match the model directory, but some spell it with hyphens (`blenderbot_small`
+    # -> `blenderbot-small.md`), so try that too before giving up.
+    for candidate in (model_name, model_name.replace("_", "-")):
+        try:
+            text = (DOCS_ROOT / f"{candidate}.md").read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = _CONTRIBUTION_DATE_RE.search(text)
+        if match is not None:
+            return date.fromisoformat(match.group(2))
+    return None
+
+
+def is_exempt_by_cutoff(file_path: Path, cutoff_date: str) -> bool:
+    """Whether the model owning `file_path` predates `cutoff_date` and is therefore grandfathered.
+
+    Rules that encode a convention introduced at some point in time use this so they do not need to
+    carry an allowlist of every model added before it. Models whose doc page has no contribution date
+    are checked, so a missing date never silently disables a rule.
+    """
+    if not cutoff_date:
+        return False
+    contribution_date = model_contribution_date(file_path)
+    return contribution_date is not None and contribution_date < date.fromisoformat(cutoff_date)
 
 
 def _has_rule_suppression(lines: list[str], rule_id: str, line_number: int) -> bool:

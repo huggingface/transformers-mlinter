@@ -593,10 +593,22 @@ def main() -> int:
         violations = sorted(violations, key=lambda v: (str(v.file_path), v.line_number, v.message))
 
         if args.output_json is not None:
-            payload = [
-                {"path": str(v.file_path), "line": v.line_number, "rule": v.rule_id, "message": v.message}
-                for v in violations
-            ]
+            rules_used = sorted({v.rule_id for v in violations if v.rule_id})
+            payload = {
+                "findings": [
+                    {"path": str(v.file_path), "line": v.line_number, "rule": v.rule_id, "message": v.message}
+                    for v in violations
+                ],
+                "rules": {
+                    rule: {
+                        "description": TRF_RULE_SPECS[rule]["description"],
+                        "why_bad": TRF_RULE_SPECS[rule]["explanation"]["why_bad"],
+                        "diff": TRF_RULE_SPECS[rule]["explanation"]["diff"],
+                    }
+                    for rule in rules_used
+                    if rule in TRF_RULE_SPECS
+                },
+            }
             args.output_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
         if len(violations) > 0:

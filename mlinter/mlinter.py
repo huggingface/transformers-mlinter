@@ -469,6 +469,17 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Show detailed docs for one rule id (e.g. TRF001) and exit.",
     )
+    parser.add_argument(
+        "--output-json",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Write all findings to FILE as JSON in addition to the normal output. "
+        "The file is written even when there are no violations (empty findings list). "
+        "Exit code is not affected. "
+        "Used by the transformers CI to upload findings as an artifact and post "
+        "them as inline review comments on the triggering PR.",
+    )
     return parser.parse_args()
 
 
@@ -581,8 +592,29 @@ def main() -> int:
         if use_cache:
             _save_cache(new_cache)
 
+        violations = sorted(violations, key=lambda v: (str(v.file_path), v.line_number, v.message))
+
+        if args.output_json is not None:
+            # Exclude parse-error sentinels (rule_id=None) from the rules summary.
+            rules_used = sorted({v.rule_id for v in violations if v.rule_id})
+            payload = {
+                # May include parse-error sentinels with rule=null (no associated rule).
+                "findings": [
+                    {"path": str(v.file_path), "line": v.line_number, "rule": v.rule_id, "message": v.message}
+                    for v in violations
+                ],
+                "rules": {
+                    rule: {
+                        "description": TRF_RULE_SPECS[rule]["description"],
+                        "why_bad": TRF_RULE_SPECS[rule]["explanation"]["why_bad"],
+                        "diff": TRF_RULE_SPECS[rule]["explanation"]["diff"],
+                    }
+                    for rule in rules_used
+                },
+            }
+            args.output_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
         if len(violations) > 0:
-            violations = sorted(violations, key=lambda v: (str(v.file_path), v.line_number, v.message))
             for violation in violations:
                 emit_violation(violation, github_annotations=args.github_annotations)
             print(f"Found {len(violations)} modeling structure violation(s).", file=sys.stderr)

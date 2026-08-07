@@ -476,7 +476,9 @@ def parse_args() -> argparse.Namespace:
         metavar="FILE",
         help="Write all findings to FILE as JSON in addition to the normal output. "
         "The file is written even when there are no violations (empty findings list). "
-        "Exit code is not affected.",
+        "Exit code is not affected. "
+        "Used by the transformers CI to upload findings as an artifact and post "
+        "them as inline review comments on the triggering PR.",
     )
     return parser.parse_args()
 

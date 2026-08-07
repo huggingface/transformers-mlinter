@@ -52,6 +52,21 @@ def _simple_name(name: str) -> str:
     return name.split(".")[-1]
 
 
+def call_leaf_name(call: ast.Call) -> str | None:
+    """Return the final identifier of a call target, or None when there isn't one.
+
+    Unlike `full_name`, this resolves through a chained call: in `x.masked_fill(...).masked_fill(...)`
+    the outer target's base is a Call, which `full_name` cannot render, so a rule matching on the leaf
+    method name would silently miss every call but the innermost one.
+    """
+    func = call.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return None
+
+
 def _model_dir_name(file_path: Path) -> str | None:
     try:
         relative = file_path.resolve().relative_to(MODELS_ROOT.resolve())

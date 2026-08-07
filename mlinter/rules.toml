@@ -474,3 +474,187 @@ diff = '''
 -        self.atom_transformer = AcmeAtomTransformer(config)
 +        self.encoder = AcmeEncoder(config)
 '''
+
+[rules.TRF027]
+description = "Model files must raise explicit errors instead of using bare `assert`."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF027.explanation]
+what_it_does = "Flags any `assert` statement in modeling_*.py, modular_*.py and configuration_*.py."
+why_bad = "`python -O` strips assert statements, so a shape or config check written as an assert silently disappears in optimised runs. An assert also gives the user a bare AssertionError with no guidance, where a ValueError can name the offending value and what to do about it."
+diff = '''
+ def forward(self, hidden_states):
+-    assert hidden_states.dim() == 3
++    if hidden_states.dim() != 3:
++        raise ValueError(f"Expected a 3D tensor, got shape {tuple(hidden_states.shape)}.")
+'''
+
+[rules.TRF028]
+description = "Model files must carry a complete license header."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF028.explanation]
+what_it_does = "Checks the first 25 lines of modeling_*.py, modular_*.py, configuration_*.py, processing_*.py, image_processing_*.py and video_processing_*.py for a `Licensed under the <name> License` line followed by every clause of the standard warranty paragraph, from `You may obtain a copy of the License at` through `limitations under the License.`. The lines are flattened and lowercased before matching, so wrapping and comment style do not matter. Neither the license name nor the copyright line is checked: BLIP is BSD-3-clause and Sapiens2 carries Meta's own license, and the copyright year and attribution vary per model."
+why_bad = "A new model file that ships without the header leaves its provenance ambiguous, and adding it later means touching a file that has already been released. Matching only the words `Apache License` would accept a header truncated mid-paragraph or mangled by a bad search-and-replace, which is what every header defect in the library actually looks like: bitnet loses the closing `limitations under the License.`, tvp and bridgetower have a stray `=` before every comma, and minimax_m3_vl stops after the URL."
+diff = '''
++# Copyright 2026 The HuggingFace Team. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# ...
+ """PyTorch Acme model."""
+'''
+
+[rules.TRF029]
+description = "A module taking `config` must not also take arguments that live on the config."
+default_enabled = true
+allowlist_models = ["kosmos2"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF029.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags an `__init__` that accepts `config` alongside an argument whose name is unambiguously a config field (hidden_size, num_attention_heads, intermediate_size, head_dim, num_hidden_layers, embed_dim, dropout, eps, patch_size, rope_theta, ...). kosmos2 is allowlisted because its doc page (kosmos-2.md) cannot be derived from the directory name, so the cutoff cannot grandfather it."
+why_bad = "The same number now has two sources of truth and the caller decides which one wins, so editing the config no longer changes the model that gets built. It also makes every call site carry architecture knowledge that belongs inside the module, which is why reviewers ask for it on new models over and over."
+diff = '''
+ class AcmeAttention(nn.Module):
+-    def __init__(self, config, embed_dim, num_heads, dropout):
++    def __init__(self, config, layer_idx=None):
+         super().__init__()
+-        self.embed_dim = embed_dim
+-        self.num_heads = num_heads
++        self.embed_dim = config.hidden_size
++        self.num_heads = config.num_attention_heads
+'''
+
+[rules.TRF030]
+description = "Reaching more than two levels into the config means the module was handed the wrong config."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF030.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags attribute chains rooted at `config` or `self.config` that go three or more levels deep. `config.hidden_size` (one hop) and `config.text_config.hidden_size` (two hops, the normal sub-config access) are fine; one violation is reported per line."
+why_bad = "A module that walks `config.diffusion_config.atom_encoder_config.hidden_size` is coupled to the whole config hierarchy rather than to its own slice of it, so it cannot be reused, tested or given a different sub-config. Pass the relevant sub-config down and the chain collapses to one hop."
+diff = '''
+ class AcmeAtomEncoder(nn.Module):
+     def __init__(self, config):
+         super().__init__()
+-        self.norm = AcmeLayerNorm(config.diffusion_config.atom_encoder_config.hidden_size)
++        self.norm = AcmeLayerNorm(config.hidden_size)
+'''
+
+[rules.TRF031]
+description = "Dataclasses in modeling files must inherit ModelOutput."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF031.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags a top-level `@dataclass` class whose bases do not include something ending in `Output`."
+why_bad = "A plain dataclass does not index like a tuple, does not survive `return_dict=False`, and is invisible to @auto_docstring, so its fields never reach the generated API docs. Inheriting ModelOutput gets all three for free."
+diff = '''
+ @auto_docstring
+ @dataclass
+-class AcmeStructureOutput:
++class AcmeStructureOutput(ModelOutput):
+     positions: torch.Tensor
+     confidence: torch.Tensor
+'''
+
+[rules.TRF032]
+description = "Masked positions must be filled with torch.finfo(dtype).min, not a magic negative number."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF032.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags masked_fill, masked_fill_, full, full_like and new_full called with a negated numeric literal of magnitude 1e3 or more."
+why_bad = "A hardcoded -1e9 overflows to -inf in float16 and is not nearly the smallest value in float32, so the same mask behaves differently per dtype and can produce NaNs after softmax. `torch.finfo(dtype).min` is the smallest representable value in whatever dtype is actually running."
+diff = '''
+-attention_scores = attention_scores.masked_fill(~mask, -1e9)
++attention_scores = attention_scores.masked_fill(~mask, torch.finfo(attention_scores.dtype).min)
+'''
+
+[rules.TRF033]
+description = "Hyperparameters must be set on the config, not mutated through a set_* method."
+default_enabled = true
+allowlist_models = []
+cutoff_date = "2026-06-20"
+
+[rules.TRF033.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags methods whose name starts with `set_`, except the PreTrainedModel contract methods set_input_embeddings, set_output_embeddings, set_decoder, set_encoder, set_attn_implementation and set_default_language."
+why_bad = "A setter makes the model's behaviour depend on call order: the value is not in the config, so it is not saved, not restored by from_pretrained, and not visible to anything planning device maps or parallelism. Users then have to know to call it, and forgetting is silent."
+diff = '''
+ class AcmeTriangleAttention(nn.Module):
+-    def set_chunk_size(self, chunk_size):
+-        self.chunk_size = chunk_size
++    def __init__(self, config):
++        super().__init__()
++        self.chunk_size = config.chunk_size
+'''
+
+[rules.TRF034]
+description = "Layer classes held in an nn.ModuleList must subclass GradientCheckpointingLayer."
+default_enabled = true
+allowlist_models = ["cosmos3_edge", "dinov3_convnext", "hunyuan_vl", "kimi_k25", "openai", "radio", "tipsv2", "tipsv2_dpt", "x_clip", "xcodec2"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF034.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags a locally-defined class whose name ends in `Layer` or `Block`, instantiated inside an `nn.ModuleList(...)`, that does not reach `GradientCheckpointingLayer` through its local base chain. One violation per layer class. ModuleLists of projections, heads or experts are out of scope because they are not checkpointing boundaries."
+why_bad = "`gradient_checkpointing_enable()` wraps layers by asking each one whether it is a GradientCheckpointingLayer. A plain nn.Module in the stack is skipped silently, so training appears to use checkpointing and still allocates full activations for those layers, and the OOM shows up far from the cause."
+diff = '''
+-class AcmeDecoderLayer(nn.Module):
++class AcmeDecoderLayer(GradientCheckpointingLayer):
+     def __init__(self, config, layer_idx):
+         super().__init__()
+'''
+
+[rules.TRF035]
+description = "Model files must not silence the linter with `# noqa`."
+default_enabled = true
+allowlist_models = ["hunyuan_vl", "nemotron3_5_asr", "zaya"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF035.explanation]
+what_it_does = "Flags `# noqa` comments, with or without explicit codes, in modeling_*.py, modular_*.py and configuration_*.py."
+why_bad = "Model files are ordinary code held to the repo's lint rules; a suppression there means the underlying issue was left in place, and blanket `# noqa` also hides every future violation on that line. Reviewers spend threads deleting these on new models, and they cluster in machine-generated code where the generator silenced the linter rather than satisfying it."
+diff = '''
+-from ...modeling_utils import PreTrainedModel  # noqa: F401
++from ...modeling_utils import PreTrainedModel
+'''
+
+[rules.TRF036]
+description = "nn.Sequential hides the forward flow; declare the submodules explicitly."
+default_enabled = true
+allowlist_models = ["x_clip"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF036.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags any `nn.Sequential(...)` construction."
+why_bad = "Sequential names its children by position, so weights land at `mlp.0.weight` and `mlp.2.weight`; the conversion mapping, _tied_weights_keys and every parallelism plan then have to reference indices, and inserting a layer renames everything after it. It also hides the forward, so the dtype casts and residuals between the steps are not visible where they happen."
+diff = '''
+-        self.mlp = nn.Sequential(
+-            nn.Linear(config.hidden_size, config.intermediate_size),
+-            nn.GELU(),
+-            nn.Linear(config.intermediate_size, config.hidden_size),
+-        )
++        self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size)
++        self.act = ACT2FN[config.hidden_act]
++        self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
+'''
+
+[rules.TRF037]
+description = "torch.einsum is hard to read; prefer explicit matmul/transpose operations."
+default_enabled = false
+allowlist_models = ["x_clip"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF037.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags calls to einsum and reports the equation string when it is a literal. Disabled by default: einsum is occasionally the clearest way to express a contraction, so this is opt-in rather than a hard convention."
+why_bad = "An einsum equation encodes the shapes in a notation the reader has to decode, and when the equation is built dynamically the reader cannot tell which contraction runs at all. Reviewers ask for einsums to be expanded on almost every model that introduces them, which is why it is worth having the check available even though it is not enforced."
+diff = '''
+-        pair_bias = torch.einsum("bqhc,bkhc->bhqk", query_states, key_states)
++        pair_bias = query_states.permute(0, 2, 1, 3) @ key_states.permute(0, 2, 3, 1)
+'''

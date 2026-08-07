@@ -30,9 +30,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   sibling modules of the same model directory. Entries naming another model's classes are flagged too: `post_init`
   already collects `_no_split_modules` from child submodels. Complements `TRF005`, which only validates the shape of
   the value. Suppress with `# trf-ignore: TRF022`.
+- Added `TRF023`, which flags config fields declared under an upstream paper's abbreviation instead of the library's
+  canonical name: `d_model`/`n_embd` (→ `hidden_size`), `d_ff`/`d_inner`/`ffn_dim`/`ffn_hidden_size`/`expansion_ratio`
+  (→ `intermediate_size`), `d_head` (→ `head_dim`), `n_head`/`n_heads` (→ `num_attention_heads`),
+  `n_layer`/`n_layers`/`num_blocks` (→ `num_hidden_layers`). Fields are collected from the class body and from
+  `__init__`/`__post_init__` assignments and signature defaults, and each legacy name is reported once per class.
+  Names that remain idiomatic in parts of the library (`num_heads`, `num_layers`, `embed_dim`, `mlp_ratio`) are
+  deliberately not flagged. `cutoff_date` grandfathers the ~78 models that predate the convention; `kosmos2` and
+  `openai` are allowlisted because their doc pages (`kosmos-2.md`, `openai-gpt.md`) cannot be derived from the
+  directory name, and `qwen3_asr` because its encoder config mirrors Whisper's public `d_model`.
+- Added `TRF024`, which flags `torch.nn` layer constructors built with an integer literal greater than 8 in a
+  dimension position — positionally or by keyword — in `modeling_*.py` and `modular_*.py`. Covers `Linear`,
+  `LazyLinear`, `Bilinear`, `Embedding`, `EmbeddingBag`, `LayerNorm`, `RMSNorm`, `GroupNorm`, `BatchNorm*`,
+  `InstanceNorm*`, `Conv*d`, `ConvTranspose*d` and `MultiheadAttention`. Operator-shape arguments (`kernel_size`,
+  `stride`, `padding`, `num_groups`) are ignored and literals up to 8 are allowed, so scalar heads, binary
+  classifiers and RGB channel counts stay clean. A hardcoded width pins the module to one checkpoint size and splits
+  the source of truth away from the config.
+- Added `TRF025`, which flags mask factories (`create_causal_mask`, `create_bidirectional_mask`,
+  `create_sliding_window_causal_mask`, `create_chunked_causal_mask`, `create_masks_for_generate`, and any
+  `create_*_mask` helper) called from a class whose name ends in `Layer`, `Attention` or `Block`. Mask construction
+  does not vary per layer, so building it inside the layer repeats quadratic work and leaves each layer owning its
+  own mask. Models and encoders that build the mask once and pass it down are not in scope.
+- Added `TRF026`, which flags a non-`PreTrainedModel` class that defines only `__init__` and `forward`, assigns
+  exactly one `self.<attr>` in `__init__`, and whose `forward` body is exactly `return self.<attr>(...)` for that
+  attribute. The wrapper adds a level to every weight name, to `_no_split_modules`, to the parallelism plans and to
+  every conversion mapping while contributing no computation. `PreTrainedModel` subclasses are exempt because they
+  exist for `from_pretrained` and the auto classes even when the forward only delegates.
 - Shared the companion-config resolution helpers (`_find_config_file`, `_parse_config_classes`,
   `_resolve_config_class_name_from_modeling_class`, `_resolve_target_config_class_name`) by moving them from `TRF015`
   into `mlinter/_helpers.py`, so cross-file rules resolve a modeling class to its target config class the same way.
+- Moved `model_contribution_date` (and `DOCS_ROOT`) from `TRF019` into `mlinter/_helpers.py` and added
+  `is_exempt_by_cutoff`, so every cutoff-gated rule resolves a model's contribution date the same way. The lookup now
+  also tries the hyphenated spelling of the model directory (`blenderbot_small` → `blenderbot-small.md`), which
+  grandfathers models whose doc page uses hyphens instead of leaving them permanently unexempt.
+
+### Fixed
+
+- Removed a stale `# type: ignore[union-attr]` in `TRF019` that `ty` reported as an unused suppression, so
+  `make typecheck` is clean.
 
 ## [0.1.2] - 2026-07-08
 

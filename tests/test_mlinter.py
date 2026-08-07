@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import date
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +31,7 @@ from mlinter import trf011 as _trf011_mod
 from mlinter import trf019 as _trf019_mod
 from mlinter import trf020 as _trf020_mod
 from mlinter import trf022 as _trf022_mod
+from mlinter import trf023 as _trf023_mod
 
 
 TEST_PP_PLAN_MODULES = {"foo": {"embed_tokens", "final_layer_norm", "layers", "norm"}}
@@ -2449,6 +2451,398 @@ class FooPreTrainedModel(PreTrainedModel):
 """
         file_path = Path("src/transformers/models/foo/modeling_foo.py")
         self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    # --- TRF023: config fields must use canonical dimension names ---
+
+    def _trf023(self, source, file_name="configuration_foo.py"):
+        file_path = Path(f"src/transformers/models/foo/{file_name}")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF023})
+        return [v for v in violations if v.rule_id == mlinter.TRF023]
+
+    def test_trf023_flags_legacy_dataclass_fields(self):
+        source = """
+@strict(accept_kwargs=True)
+class FooConfig(PreTrainedConfig):
+    d_model: int = 1024
+    d_ff: int = 4096
+    n_heads: int = 16
+    n_layers: int = 24
+"""
+        violations = self._trf023(source)
+        self.assertEqual(len(violations), 4)
+        messages = " ".join(v.message for v in violations)
+        for legacy, canonical in (
+            ("d_model", "hidden_size"),
+            ("d_ff", "intermediate_size"),
+            ("n_heads", "num_attention_heads"),
+            ("n_layers", "num_hidden_layers"),
+        ):
+            self.assertIn(f"`{legacy}`", messages)
+            self.assertIn(f"`{canonical}`", messages)
+
+    def test_trf023_flags_legacy_init_assignment(self):
+        source = """
+class FooConfig(PreTrainedConfig):
+    def __init__(self, n_embd=768, **kwargs):
+        super().__init__(**kwargs)
+        self.n_embd = n_embd
+"""
+        violations = self._trf023(source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("hidden_size", violations[0].message)
+
+    def test_trf023_accepts_canonical_names(self):
+        source = """
+@strict(accept_kwargs=True)
+class FooConfig(PreTrainedConfig):
+    hidden_size: int = 1024
+    intermediate_size: int = 4096
+    num_attention_heads: int = 16
+    num_hidden_layers: int = 24
+    head_dim: int = 64
+    num_heads: int = 16
+    num_layers: int = 24
+    embed_dim: int = 512
+"""
+        self.assertEqual(self._trf023(source), [])
+
+    def test_trf023_reports_each_legacy_field_once(self):
+        source = """
+class FooConfig(PreTrainedConfig):
+    def __init__(self, d_model=1024, **kwargs):
+        super().__init__(**kwargs)
+        self.d_model = d_model
+"""
+        self.assertEqual(len(self._trf023(source)), 1)
+
+    def test_trf023_ignores_non_config_classes_and_files(self):
+        source = """
+class FooAttention(nn.Module):
+    d_model: int = 1024
+"""
+        self.assertEqual(self._trf023(source), [])
+        config_source = "class FooConfig(PreTrainedConfig):\n    d_model: int = 1024\n"
+        self.assertEqual(self._trf023(config_source, file_name="modeling_foo.py"), [])
+
+    def test_trf023_respects_suppression(self):
+        source = """
+class FooConfig(PreTrainedConfig):
+    # trf-ignore: TRF023
+    d_model: int = 1024
+"""
+        self.assertEqual(self._trf023(source), [])
+
+    def test_trf023_exempts_models_before_cutoff(self):
+        source = "class FooConfig(PreTrainedConfig):\n    d_model: int = 1024\n"
+        file_path = Path("src/transformers/models/foo/configuration_foo.py")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2023, 1, 1)):
+            with patch.object(_trf023_mod, "CUTOFF_DATE", "2026-06-20"):
+                violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF023})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF023], [])
+
+    # --- TRF024: layer dimensions must come from the config ---
+
+    def _trf024(self, source, file_name="modeling_foo.py"):
+        file_path = Path(f"src/transformers/models/foo/{file_name}")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF024})
+        return [v for v in violations if v.rule_id == mlinter.TRF024]
+
+    def test_trf024_flags_hardcoded_dimensions(self):
+        source = """
+class FooEmbedding(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.proj = nn.Linear(768, 3072, bias=False)
+        self.norm = nn.LayerNorm(3072)
+        self.embed = nn.Embedding(32000, config.hidden_size)
+"""
+        violations = self._trf024(source)
+        self.assertEqual(len(violations), 3)
+        self.assertIn("768", violations[0].message)
+        self.assertIn("nn.Linear", violations[0].message)
+
+    def test_trf024_flags_keyword_dimensions_and_sequence_shapes(self):
+        source = """
+class FooEmbedding(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.proj = nn.Linear(in_features=config.hidden_size, out_features=4096)
+        self.norm = nn.LayerNorm((1024,))
+"""
+        violations = self._trf024(source)
+        self.assertEqual(len(violations), 2)
+
+    def test_trf024_allows_config_values_and_small_literals(self):
+        source = """
+class FooHead(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.score = nn.Linear(config.hidden_size, 1, bias=False)
+        self.binary = nn.Linear(config.hidden_size, 2)
+        self.patch = nn.Conv2d(3, config.hidden_size, kernel_size=16, stride=16)
+        self.norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.group = nn.GroupNorm(32, config.hidden_size)
+"""
+        self.assertEqual(self._trf024(source), [])
+
+    def test_trf024_ignores_operator_shape_arguments(self):
+        source = """
+class FooConv(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.conv = nn.Conv1d(config.hidden_size, config.hidden_size, kernel_size=128, padding=64)
+"""
+        self.assertEqual(self._trf024(source), [])
+
+    def test_trf024_ignores_unrelated_linear_attribute(self):
+        source = """
+class FooBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.layer = self.registry.Linear(768, 768)
+"""
+        self.assertEqual(self._trf024(source), [])
+
+    def test_trf024_respects_suppression_and_file_type(self):
+        source = """
+class FooEmbedding(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        # trf-ignore: TRF024
+        self.proj = nn.Linear(768, 3072)
+"""
+        self.assertEqual(self._trf024(source), [])
+        plain = "class FooConfig(PreTrainedConfig):\n    proj = nn.Linear(768, 3072)\n"
+        self.assertEqual(self._trf024(plain, file_name="configuration_foo.py"), [])
+
+    # --- TRF025: masks must be built once in the model, not per layer ---
+
+    def _trf025(self, source, file_name="modeling_foo.py"):
+        file_path = Path(f"src/transformers/models/foo/{file_name}")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF025})
+        return [v for v in violations if v.rule_id == mlinter.TRF025]
+
+    def test_trf025_flags_mask_creation_inside_a_layer(self):
+        source = """
+class FooDecoderLayer(nn.Module):
+    def forward(self, hidden_states, attention_mask=None, **kwargs):
+        attention_mask = create_causal_mask(config=self.config, attention_mask=attention_mask)
+        return self.self_attn(hidden_states, attention_mask, **kwargs)
+"""
+        violations = self._trf025(source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("create_causal_mask", violations[0].message)
+        self.assertIn("FooDecoderLayer", violations[0].message)
+
+    def test_trf025_flags_custom_mask_factory_in_attention(self):
+        source = """
+class FooAttention(nn.Module):
+    def forward(self, hidden_states, attention_mask=None):
+        mask = create_local_causal_valid_mask(hidden_states)
+        return hidden_states + mask
+"""
+        self.assertEqual(len(self._trf025(source)), 1)
+
+    def test_trf025_allows_mask_creation_in_the_model(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, inputs_embeds, attention_mask=None, **kwargs):
+        causal_mask = create_causal_mask(config=self.config, attention_mask=attention_mask)
+        for layer in self.layers:
+            inputs_embeds = layer(inputs_embeds, causal_mask, **kwargs)
+        return inputs_embeds
+
+
+class FooEncoder(nn.Module):
+    def forward(self, hidden_states, attention_mask=None):
+        attention_mask = create_bidirectional_mask(config=self.config, attention_mask=attention_mask)
+        return hidden_states
+"""
+        self.assertEqual(self._trf025(source), [])
+
+    def test_trf025_allows_layer_consuming_a_prepared_mask(self):
+        source = """
+class FooDecoderLayer(nn.Module):
+    def forward(self, hidden_states, attention_mask=None, **kwargs):
+        return self.self_attn(hidden_states, attention_mask, **kwargs)
+"""
+        self.assertEqual(self._trf025(source), [])
+
+    def test_trf025_respects_suppression_and_file_type(self):
+        source = """
+# trf-ignore: TRF025
+class FooDecoderLayer(nn.Module):
+    def forward(self, hidden_states, attention_mask=None):
+        return create_causal_mask(config=self.config, attention_mask=attention_mask)
+"""
+        self.assertEqual(self._trf025(source), [])
+        plain = """
+class FooLayer(nn.Module):
+    def forward(self, x):
+        return create_causal_mask(x)
+"""
+        self.assertEqual(self._trf025(plain, file_name="processing_foo.py"), [])
+
+    # --- TRF026: a module that only forwards to its single submodule ---
+
+    def _trf026(self, source, file_name="modeling_foo.py"):
+        file_path = Path(f"src/transformers/models/foo/{file_name}")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF026})
+        return [v for v in violations if v.rule_id == mlinter.TRF026]
+
+    def test_trf026_flags_pass_through_wrapper(self):
+        source = """
+class FooAtomTransformer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+        violations = self._trf026(source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("FooAtomTransformer", violations[0].message)
+        self.assertIn("self.encoder", violations[0].message)
+
+    def test_trf026_flags_wrapper_with_docstring(self):
+        source = '''
+class FooValueEmbedding(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.value_projection = nn.Linear(config.hidden_size, config.hidden_size)
+
+    def forward(self, hidden_states):
+        """Project the inputs."""
+        return self.value_projection(hidden_states)
+'''
+        self.assertEqual(len(self._trf026(source)), 1)
+
+    def test_trf026_allows_module_doing_extra_work(self):
+        source = """
+class FooBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.encoder = FooEncoder(config)
+        self.norm = nn.LayerNorm(config.hidden_size)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.norm(self.encoder(hidden_states, **kwargs))
+"""
+        self.assertEqual(self._trf026(source), [])
+
+    def test_trf026_allows_extra_statement_or_method(self):
+        residual = """
+class FooBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        residual = hidden_states
+        return residual + self.encoder(hidden_states, **kwargs)
+"""
+        self.assertEqual(self._trf026(residual), [])
+        extra_method = """
+class FooBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.encoder = FooEncoder(config)
+
+    def reset(self):
+        self.encoder.reset()
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+        self.assertEqual(self._trf026(extra_method), [])
+
+    def test_trf026_exempts_pretrained_model_subclasses(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+        self.assertEqual(self._trf026(source), [])
+
+    def test_trf026_exempts_modular_class_inheriting_an_imported_model(self):
+        # `LlamaModel` is a PreTrainedModel, but it is imported, so the base cannot be resolved from
+        # this file. Flagging it would report a public model class as a pass-through wrapper.
+        source = """
+from ..llama.modeling_llama import LlamaModel
+
+class FooModel(LlamaModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.language_model = FooTextModel(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.language_model(hidden_states, **kwargs)
+"""
+        self.assertEqual(self._trf026(source, file_name="modular_foo.py"), [])
+        # The same holds one level down, through a locally defined subclass of the imported base.
+        indirect = (
+            source
+            + """
+class FooDecoder(FooModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+        )
+        self.assertEqual(self._trf026(indirect, file_name="modular_foo.py"), [])
+
+    def test_trf026_still_flags_plain_module_bases_in_modular(self):
+        # GradientCheckpointingLayer and anything under `torch.nn` are known not to be models, so an
+        # unresolvable-base exemption must not swallow these.
+        for base in ("nn.Module", "torch.nn.Module", "GradientCheckpointingLayer"):
+            source = f"""
+class FooAtomTransformer({base}):
+    def __init__(self, config):
+        super().__init__()
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+            with self.subTest(base=base):
+                self.assertEqual(len(self._trf026(source, file_name="modular_foo.py")), 1)
+
+    def test_trf026_allows_delegating_to_a_different_attribute(self):
+        source = """
+class FooBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder.layers[0](hidden_states, **kwargs)
+"""
+        self.assertEqual(self._trf026(source), [])
+
+    def test_trf026_respects_suppression(self):
+        source = """
+# trf-ignore: TRF026
+class FooAtomTransformer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+        self.assertEqual(self._trf026(source), [])
 
 
 if __name__ == "__main__":

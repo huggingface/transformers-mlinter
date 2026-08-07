@@ -595,6 +595,7 @@ def main() -> int:
         violations = sorted(violations, key=lambda v: (str(v.file_path), v.line_number, v.message))
 
         if args.output_json is not None:
+            # Exclude parse-error sentinels (rule_id=None) from the rules summary.
             rules_used = sorted({v.rule_id for v in violations if v.rule_id})
             payload = {
                 "findings": [

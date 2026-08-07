@@ -23,12 +23,46 @@ from ._helpers import (
     _collect_class_bases,
     _has_rule_suppression,
     _inherits_pretrained_model,
+    _simple_name,
     is_exempt_by_cutoff,
 )
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
+
+# Bases that are known not to be models. Everything under `torch.nn` is a plain layer, and
+# GradientCheckpointingLayer is the library's own base for decoder layers.
+_PLAIN_BASES = {"GradientCheckpointingLayer"}
+
+
+def _is_plain_base(base_name: str) -> bool:
+    return base_name.startswith(("nn.", "torch.nn.")) or base_name in _PLAIN_BASES
+
+
+def _bases_are_known(class_name: str, class_to_bases: dict[str, list[str]], visiting: set[str] | None = None) -> bool:
+    """Whether every base of *class_name* is resolvable from this file alone.
+
+    A modular file subclasses another model's class by import (`class AcmeModel(LlamaModel)`), and
+    `class_to_bases` only indexes the file under analysis, so such a base resolves to nothing and
+    `_inherits_pretrained_model` cannot tell a PreTrainedModel from a plain block. Treating that as
+    "not a model" would flag public model classes, so an unresolvable base means hands off.
+    """
+    if visiting is None:
+        visiting = set()
+    if class_name in visiting:
+        return True
+    visiting.add(class_name)
+
+    for base_name in class_to_bases.get(class_name, []):
+        if _is_plain_base(base_name):
+            continue
+        simple_base_name = _simple_name(base_name)
+        if simple_base_name not in class_to_bases:
+            return False
+        if not _bases_are_known(simple_base_name, class_to_bases, visiting):
+            return False
+    return True
 
 
 def _self_attribute_targets(function_node: ast.FunctionDef) -> list[str]:
@@ -84,6 +118,10 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         # PreTrainedModel subclasses are public API: they exist for `from_pretrained`, auto classes and
         # checkpoint layout even when the forward only delegates.
         if _inherits_pretrained_model(class_node.name, class_to_bases):
+            continue
+        # `class AcmeModel(LlamaModel)` in a modular file is a PreTrainedModel, but the base is
+        # imported so the check above cannot see it. Skip anything whose bases do not resolve here.
+        if not _bases_are_known(class_node.name, class_to_bases):
             continue
         if _has_rule_suppression(source_lines, RULE_ID, class_node.lineno):
             continue

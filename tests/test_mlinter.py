@@ -2773,6 +2773,52 @@ class FooModel(FooPreTrainedModel):
 """
         self.assertEqual(self._trf026(source), [])
 
+    def test_trf026_exempts_modular_class_inheriting_an_imported_model(self):
+        # `LlamaModel` is a PreTrainedModel, but it is imported, so the base cannot be resolved from
+        # this file. Flagging it would report a public model class as a pass-through wrapper.
+        source = """
+from ..llama.modeling_llama import LlamaModel
+
+class FooModel(LlamaModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.language_model = FooTextModel(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.language_model(hidden_states, **kwargs)
+"""
+        self.assertEqual(self._trf026(source, file_name="modular_foo.py"), [])
+        # The same holds one level down, through a locally defined subclass of the imported base.
+        indirect = (
+            source
+            + """
+class FooDecoder(FooModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+        )
+        self.assertEqual(self._trf026(indirect, file_name="modular_foo.py"), [])
+
+    def test_trf026_still_flags_plain_module_bases_in_modular(self):
+        # GradientCheckpointingLayer and anything under `torch.nn` are known not to be models, so an
+        # unresolvable-base exemption must not swallow these.
+        for base in ("nn.Module", "torch.nn.Module", "GradientCheckpointingLayer"):
+            source = f"""
+class FooAtomTransformer({base}):
+    def __init__(self, config):
+        super().__init__()
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+            with self.subTest(base=base):
+                self.assertEqual(len(self._trf026(source, file_name="modular_foo.py")), 1)
+
     def test_trf026_allows_delegating_to_a_different_attribute(self):
         source = """
 class FooBlock(nn.Module):

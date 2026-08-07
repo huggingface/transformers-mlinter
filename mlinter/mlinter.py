@@ -609,7 +609,6 @@ def main() -> int:
                         "diff": TRF_RULE_SPECS[rule]["explanation"]["diff"],
                     }
                     for rule in rules_used
-                    if rule in TRF_RULE_SPECS
                 },
             }
             args.output_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF036: torch.einsum is hard to read; prefer explicit matmul/transpose operations."""
+"""TRF036: nn.Sequential hides the forward flow; declare the submodules explicitly."""
 
 import ast
 from pathlib import Path
@@ -35,22 +35,19 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         if not isinstance(node, ast.Call):
             continue
         try:
-            if full_name(node.func).split(".")[-1] != "einsum":
+            if full_name(node.func).split(".")[-1] != "Sequential":
                 continue
         except ValueError:
             continue
         if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
             continue
-        equation = ""
-        if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-            equation = f" (`{node.args[0].value}`)"
         violations.append(
             Violation(
                 file_path=file_path,
                 line_number=node.lineno,
                 message=(
-                    f"{RULE_ID}: `einsum`{equation} in a modeling file. "
-                    "Write the operation out with matmul/transpose/reshape so the shapes are readable."
+                    f"{RULE_ID}: `nn.Sequential` hides the forward flow and names its weights by index. "
+                    "Assign the submodules individually and call them in `forward`."
                 ),
             )
         )

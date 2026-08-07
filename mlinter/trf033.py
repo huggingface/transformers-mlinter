@@ -12,36 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF033: Layer classes held in an nn.ModuleList must subclass GradientCheckpointingLayer."""
+"""TRF033: Hyperparameters must be set on the config, not mutated through a set_* method."""
 
 import ast
 from pathlib import Path
 
-from ._helpers import Violation, _collect_class_bases, _has_rule_suppression, full_name, is_exempt_by_cutoff
+from ._helpers import Violation, _has_rule_suppression, is_exempt_by_cutoff
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
 
-# Only the repeated per-layer blocks are in scope; a ModuleList of projections or experts is not a
-# gradient-checkpointing boundary.
-LAYER_CLASS_SUFFIXES = ("Layer", "Block")
-
-
-def _subclasses_gradient_checkpointing_layer(name: str, class_to_bases: dict[str, list[str]]) -> bool:
-    seen: set[str] = set()
-    stack = [name]
-    while stack:
-        current = stack.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        for base in class_to_bases.get(current, []):
-            simple = base.split(".")[-1]
-            if simple == "GradientCheckpointingLayer":
-                return True
-            stack.append(simple)
-    return False
+# The setters that are part of the PreTrainedModel contract.
+SANCTIONED_SETTERS = {
+    "set_input_embeddings",
+    "set_output_embeddings",
+    "set_decoder",
+    "set_encoder",
+    "set_attn_implementation",
+    "set_default_language",
+}
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
@@ -50,39 +40,24 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     if is_exempt_by_cutoff(file_path, CUTOFF_DATE):
         return []
 
-    class_to_bases = _collect_class_bases(tree)
-    local_classes = set(class_to_bases)
     violations: list[Violation] = []
-    reported: set[str] = set()
-
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+    for class_node in ast.walk(tree):
+        if not isinstance(class_node, ast.ClassDef):
             continue
-        try:
-            if full_name(node.func).split(".")[-1] != "ModuleList":
+        for item in class_node.body:
+            if not isinstance(item, ast.FunctionDef):
                 continue
-        except ValueError:
-            continue
-        for inner in ast.walk(node):
-            if not (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name)):
+            if not item.name.startswith("set_") or item.name in SANCTIONED_SETTERS:
                 continue
-            layer_name = inner.func.id
-            if layer_name not in local_classes or not layer_name.endswith(LAYER_CLASS_SUFFIXES):
+            if _has_rule_suppression(source_lines, RULE_ID, item.lineno):
                 continue
-            if layer_name in reported:
-                continue
-            if _subclasses_gradient_checkpointing_layer(layer_name, class_to_bases):
-                continue
-            if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
-                continue
-            reported.add(layer_name)
             violations.append(
                 Violation(
                     file_path=file_path,
-                    line_number=node.lineno,
+                    line_number=item.lineno,
                     message=(
-                        f"{RULE_ID}: `{layer_name}` is stacked in an `nn.ModuleList` but does not subclass "
-                        "`GradientCheckpointingLayer`, so gradient checkpointing silently skips it."
+                        f"{RULE_ID}: `{class_node.name}.{item.name}` mutates a hyperparameter after construction. "
+                        "Put the value on the config and read it where it is used."
                     ),
                 )
             )

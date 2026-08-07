@@ -12,60 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF025: A module whose forward only delegates to its single submodule adds nothing; inline it."""
+"""TRF025: Attention masks must be built once in the model, not rebuilt inside a layer or attention module."""
 
 import ast
 from pathlib import Path
 
-from ._helpers import (
-    Violation,
-    _class_methods,
-    _collect_class_bases,
-    _has_rule_suppression,
-    _inherits_pretrained_model,
-    is_exempt_by_cutoff,
-)
+from ._helpers import Violation, _has_rule_suppression, full_name, is_exempt_by_cutoff
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
 
+# The `masking_utils` entry points. Any `create_*_mask` helper is treated the same way, so a model
+# adding its own `create_foo_mask` follows the rule without this list having to grow.
+MASK_FACTORIES = {
+    "create_causal_mask",
+    "create_bidirectional_mask",
+    "create_sliding_window_causal_mask",
+    "create_chunked_causal_mask",
+    "create_masks_for_generate",
+}
 
-def _self_attribute_targets(function_node: ast.FunctionDef) -> list[str]:
-    """Return the names of every `self.<name> = ...` assignment in the function, in source order."""
-    names: list[str] = []
-    for node in ast.walk(function_node):
-        targets: list[ast.expr] = []
-        if isinstance(node, ast.Assign):
-            targets = list(node.targets)
-        elif isinstance(node, ast.AnnAssign):
-            targets = [node.target]
-        for target in targets:
-            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
-                names.append(target.attr)
-    return names
-
-
-def _effective_body(function_node: ast.FunctionDef) -> list[ast.stmt]:
-    """The function body with a leading docstring dropped."""
-    body = function_node.body
-    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-        if isinstance(body[0].value.value, str):
-            return body[1:]
-    return body
+# Only per-layer blocks are in scope. A model or an encoder that builds the mask once and hands it to
+# its layer stack is doing exactly the right thing, so those names are not matched. Suffixes are
+# checked on the class name because in modular files a layer's base class is another model's layer,
+# which no local-inheritance walk can resolve.
+PER_LAYER_CLASS_SUFFIXES = ("Layer", "Attention", "Block")
 
 
-def _delegated_attribute(function_node: ast.FunctionDef) -> str | None:
-    """If the body is exactly `return self.<attr>(...)`, return `<attr>`."""
-    body = _effective_body(function_node)
-    if len(body) != 1 or not isinstance(body[0], ast.Return):
+def _is_mask_factory(call: ast.Call) -> str | None:
+    try:
+        leaf = full_name(call.func).split(".")[-1]
+    except ValueError:
         return None
-    value = body[0].value
-    if not isinstance(value, ast.Call):
-        return None
-    func = value.func
-    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "self":
-        return func.attr
+    if leaf in MASK_FACTORIES:
+        return leaf
+    if leaf.startswith("create_") and leaf.endswith("_mask"):
+        return leaf
     return None
 
 
@@ -75,44 +58,33 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     if is_exempt_by_cutoff(file_path, CUTOFF_DATE):
         return []
 
-    class_to_bases = _collect_class_bases(tree)
     violations: list[Violation] = []
 
     for class_node in tree.body:
         if not isinstance(class_node, ast.ClassDef):
             continue
-        # PreTrainedModel subclasses are public API: they exist for `from_pretrained`, auto classes and
-        # checkpoint layout even when the forward only delegates.
-        if _inherits_pretrained_model(class_node.name, class_to_bases):
+        if not class_node.name.endswith(PER_LAYER_CLASS_SUFFIXES):
             continue
         if _has_rule_suppression(source_lines, RULE_ID, class_node.lineno):
             continue
 
-        methods = _class_methods(class_node)
-        init_node, forward_node = methods.get("__init__"), methods.get("forward")
-        if init_node is None or forward_node is None:
-            continue
-        # A class carrying anything besides __init__ and forward has behaviour of its own.
-        if set(methods) - {"__init__", "forward"}:
-            continue
-
-        assigned = _self_attribute_targets(init_node)
-        if len(assigned) != 1:
-            continue
-
-        delegated = _delegated_attribute(forward_node)
-        if delegated is None or delegated != assigned[0]:
-            continue
-
-        violations.append(
-            Violation(
-                file_path=file_path,
-                line_number=class_node.lineno,
-                message=(
-                    f"{RULE_ID}: `{class_node.name}` only forwards to `self.{delegated}`. "
-                    "Drop the wrapper and use the inner module where it is called."
-                ),
+        for node in ast.walk(class_node):
+            if not isinstance(node, ast.Call):
+                continue
+            factory = _is_mask_factory(node)
+            if factory is None:
+                continue
+            if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
+                continue
+            violations.append(
+                Violation(
+                    file_path=file_path,
+                    line_number=node.lineno,
+                    message=(
+                        f"{RULE_ID}: `{class_node.name}` calls `{factory}`. "
+                        "Build the mask once in the model and pass it down, so it is not rebuilt per layer."
+                    ),
+                )
             )
-        )
 
     return violations

@@ -12,26 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF032: Hyperparameters must be set on the config, not mutated through a set_* method."""
+"""TRF032: Masked positions must be filled with torch.finfo(dtype).min, not a magic negative number."""
 
 import ast
 from pathlib import Path
 
-from ._helpers import Violation, _has_rule_suppression, is_exempt_by_cutoff
+from ._helpers import Violation, _has_rule_suppression, call_leaf_name, is_exempt_by_cutoff
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
 
-# The setters that are part of the PreTrainedModel contract.
-SANCTIONED_SETTERS = {
-    "set_input_embeddings",
-    "set_output_embeddings",
-    "set_decoder",
-    "set_encoder",
-    "set_attn_implementation",
-    "set_default_language",
-}
+FILL_FUNCTIONS = {"masked_fill", "masked_fill_", "full", "full_like", "new_full"}
+# Anything this large is standing in for negative infinity rather than being a real value.
+MAGIC_MAGNITUDE = 1e3
+
+
+def _magic_negative(node: ast.AST) -> float | None:
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        inner = node.operand
+        if isinstance(inner, ast.Constant) and isinstance(inner.value, int | float):
+            if not isinstance(inner.value, bool) and abs(inner.value) >= MAGIC_MAGNITUDE:
+                return -float(inner.value)
+    return None
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
@@ -41,24 +44,27 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         return []
 
     violations: list[Violation] = []
-    for class_node in ast.walk(tree):
-        if not isinstance(class_node, ast.ClassDef):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
             continue
-        for item in class_node.body:
-            if not isinstance(item, ast.FunctionDef):
+        leaf = call_leaf_name(node)
+        if leaf not in FILL_FUNCTIONS:
+            continue
+        for argument in list(node.args) + [keyword.value for keyword in node.keywords]:
+            value = _magic_negative(argument)
+            if value is None:
                 continue
-            if not item.name.startswith("set_") or item.name in SANCTIONED_SETTERS:
-                continue
-            if _has_rule_suppression(source_lines, RULE_ID, item.lineno):
-                continue
+            if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
+                break
             violations.append(
                 Violation(
                     file_path=file_path,
-                    line_number=item.lineno,
+                    line_number=node.lineno,
                     message=(
-                        f"{RULE_ID}: `{class_node.name}.{item.name}` mutates a hyperparameter after construction. "
-                        "Put the value on the config and read it where it is used."
+                        f"{RULE_ID}: `{leaf}` fills with the magic value {value:g}. "
+                        "Use `torch.finfo(dtype).min` so the fill is correct in every dtype."
                     ),
                 )
             )
+            break
     return violations

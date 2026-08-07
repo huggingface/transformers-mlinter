@@ -12,133 +12,100 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF023: Layer dimensions must come from the config, not from an integer literal in the modeling file."""
+"""TRF023: Config fields must use the canonical dimension names, not the upstream paper's abbreviations."""
 
 import ast
 from pathlib import Path
 
-from ._helpers import Violation, _has_rule_suppression, full_name, is_exempt_by_cutoff
+from ._helpers import Violation, _has_rule_suppression, is_exempt_by_cutoff
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
 
-# Layer constructor -> positional indices that carry a model dimension. Shape-only arguments
-# (kernel_size, stride, padding, num_groups, ...) are not listed: they describe the operator, not the
-# architecture's width, and hardcoding them is normal.
-DIMENSION_ARGUMENTS: dict[str, tuple[int, ...]] = {
-    "Linear": (0, 1),
-    "LazyLinear": (0,),
-    "Bilinear": (0, 1, 2),
-    "Embedding": (0, 1),
-    "EmbeddingBag": (0, 1),
-    "LayerNorm": (0,),
-    "RMSNorm": (0,),
-    "GroupNorm": (1,),
-    "InstanceNorm1d": (0,),
-    "InstanceNorm2d": (0,),
-    "InstanceNorm3d": (0,),
-    "BatchNorm1d": (0,),
-    "BatchNorm2d": (0,),
-    "BatchNorm3d": (0,),
-    "Conv1d": (0, 1),
-    "Conv2d": (0, 1),
-    "Conv3d": (0, 1),
-    "ConvTranspose1d": (0, 1),
-    "ConvTranspose2d": (0, 1),
-    "ConvTranspose3d": (0, 1),
-    "MultiheadAttention": (0,),
-}
-DIMENSION_KEYWORDS = {
-    "in_features",
-    "out_features",
-    "in_channels",
-    "out_channels",
-    "num_embeddings",
-    "embedding_dim",
-    "embed_dim",
-    "normalized_shape",
-    "num_channels",
-    "hidden_size",
+# Legacy field name -> canonical replacement. Only names that are unambiguously the same quantity as
+# their canonical counterpart are listed. Deliberately excluded because they are genuinely ambiguous
+# or still idiomatic in parts of the library: `num_heads`, `num_layers`, `embed_dim`, `mlp_ratio`.
+LEGACY_CONFIG_FIELDS = {
+    "d_model": "hidden_size",
+    "n_embd": "hidden_size",
+    "d_ff": "intermediate_size",
+    "d_inner": "intermediate_size",
+    "ffn_dim": "intermediate_size",
+    "ffn_hidden_size": "intermediate_size",
+    "expansion_ratio": "intermediate_size",
+    "d_head": "head_dim",
+    "n_head": "num_attention_heads",
+    "n_heads": "num_attention_heads",
+    "n_layer": "num_hidden_layers",
+    "n_layers": "num_hidden_layers",
+    "num_blocks": "num_hidden_layers",
 }
 
-# Small integers are almost always a genuine constant of the operator rather than a model width:
-# a 1-unit scalar head, 2 for a binary classifier, 3 for RGB, 4 for a quaternion. Above this the
-# literal is a width that belongs in the config.
-MAX_INLINE_DIMENSION = 8
 
-
-def _literal_dimension(node: ast.AST) -> int | None:
-    """Return the integer a dimension argument resolves to, if it is a bare literal above the bound."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
-        return node.value if node.value > MAX_INLINE_DIMENSION else None
-    # `nn.LayerNorm((1024,))` and `nn.LayerNorm([1024])` are the same declaration.
-    if isinstance(node, ast.Tuple | ast.List):
-        for element in node.elts:
-            found = _literal_dimension(element)
-            if found is not None:
-                return found
-    return None
-
-
-def _layer_name(call: ast.Call) -> str | None:
-    """Return the torch.nn layer being constructed, for `nn.Linear(...)` / `torch.nn.Linear(...)` / `Linear(...)`."""
-    try:
-        dotted = full_name(call.func)
-    except ValueError:
-        return None
-    parts = dotted.split(".")
-    leaf = parts[-1]
-    if leaf not in DIMENSION_ARGUMENTS:
-        return None
-    # Only accept the bare name when it is unqualified or reached through an `nn`/`torch.nn` prefix,
-    # so `self.something.Linear(...)` on an unrelated object is not mistaken for a layer.
-    if len(parts) == 1 or parts[-2] == "nn":
-        return leaf
-    return None
+def _declared_field_names(class_node: ast.ClassDef) -> list[tuple[str, int]]:
+    """Return (name, lineno) for every field the config class declares in its own body or __init__."""
+    fields: list[tuple[str, int]] = []
+    for item in class_node.body:
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            fields.append((item.target.id, item.lineno))
+        elif isinstance(item, ast.Assign):
+            for target in item.targets:
+                if isinstance(target, ast.Name):
+                    fields.append((target.id, item.lineno))
+        elif isinstance(item, ast.FunctionDef) and item.name in {"__init__", "__post_init__"}:
+            # Dataclass-style configs declare in the body; older ones assign in __init__.
+            for sub in ast.walk(item):
+                targets = []
+                if isinstance(sub, ast.Assign):
+                    targets = sub.targets
+                elif isinstance(sub, ast.AnnAssign):
+                    targets = [sub.target]
+                for target in targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "self"
+                    ):
+                        fields.append((target.attr, sub.lineno))
+            # Keyword-only defaults in the signature are declarations too.
+            for arg in list(item.args.args) + list(item.args.kwonlyargs):
+                if arg.arg != "self":
+                    fields.append((arg.arg, arg.lineno))
+    return fields
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
-    if not file_path.name.startswith(("modeling_", "modular_")):
+    if not file_path.name.startswith(("configuration_", "modular_")):
         return []
     if is_exempt_by_cutoff(file_path, CUTOFF_DATE):
         return []
 
     violations: list[Violation] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        layer = _layer_name(node)
-        if layer is None:
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or not node.name.endswith("Config"):
             continue
         if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
             continue
 
-        offenders: list[int] = []
-        for index in DIMENSION_ARGUMENTS[layer]:
-            if index < len(node.args):
-                found = _literal_dimension(node.args[index])
-                if found is not None:
-                    offenders.append(found)
-        for keyword in node.keywords:
-            if keyword.arg in DIMENSION_KEYWORDS:
-                found = _literal_dimension(keyword.value)
-                if found is not None:
-                    offenders.append(found)
-
-        if not offenders:
-            continue
-
-        rendered = ", ".join(str(value) for value in dict.fromkeys(offenders))
-        violations.append(
-            Violation(
-                file_path=file_path,
-                line_number=node.lineno,
-                message=(
-                    f"{RULE_ID}: `nn.{layer}` is built with the hardcoded dimension(s) {rendered}. "
-                    "Read the value from the config so checkpoints of other sizes can load."
-                ),
+        seen: set[str] = set()
+        for field_name, lineno in _declared_field_names(node):
+            canonical = LEGACY_CONFIG_FIELDS.get(field_name)
+            if canonical is None or field_name in seen:
+                continue
+            if _has_rule_suppression(source_lines, RULE_ID, lineno):
+                continue
+            seen.add(field_name)
+            violations.append(
+                Violation(
+                    file_path=file_path,
+                    line_number=lineno,
+                    message=(
+                        f"{RULE_ID}: `{node.name}` declares `{field_name}`. "
+                        f"Use the canonical name `{canonical}` and derive `{field_name}` on conversion if the "
+                        "checkpoint needs it."
+                    ),
+                )
             )
-        )
 
     return violations

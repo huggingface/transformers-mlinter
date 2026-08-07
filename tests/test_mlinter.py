@@ -31,9 +31,26 @@ from mlinter import trf011 as _trf011_mod
 from mlinter import trf019 as _trf019_mod
 from mlinter import trf020 as _trf020_mod
 from mlinter import trf022 as _trf022_mod
+from mlinter import trf023 as _trf023_mod
 
 
 TEST_PP_PLAN_MODULES = {"foo": {"embed_tokens", "final_layer_norm", "layers", "norm"}}
+
+# The header every model file is expected to carry, verbatim from the library.
+LICENSE_HEADER = """# Copyright 2026 The HuggingFace Team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""
 
 
 def _write_custom_rules_toml(
@@ -810,13 +827,15 @@ class FooModel(FooPreTrainedModel):
         self.assertIn("expected version 1", stderr.getvalue())
 
     def test_analyze_file_allows_subscripted_class_bases(self):
-        source = """
-# Licensed under the Apache License, Version 2.0 (the "License");
+        source = (
+            LICENSE_HEADER
+            + """
 from collections import OrderedDict
 
 class _LazyConfigMapping(OrderedDict[str, str]):
     pass
 """
+        )
         file_path = Path("src/transformers/models/auto/configuration_auto.py")
         violations = mlinter.analyze_file(file_path, source)
         self.assertEqual(violations, [])
@@ -2258,15 +2277,209 @@ class FooProcessor(ProcessorMixin):
         violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF021})
         self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF021], [])
 
-    # --- TRF022: config fields must use canonical dimension names ---
+    # --- TRF022: _no_split_modules entries must name existing classes ---
 
-    def _trf022(self, source, file_name="configuration_foo.py"):
-        file_path = Path(f"src/transformers/models/foo/{file_name}")
-        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+    def _trf022_violations(self, file_path, source):
+        with patch.object(_trf022_mod, "_MODEL_DIR_CLASS_NAMES", {}):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF022})
         return [v for v in violations if v.rule_id == mlinter.TRF022]
 
-    def test_trf022_flags_legacy_dataclass_fields(self):
+    def test_trf022_accepts_locally_defined_class(self):
+        source = """
+class FooDecoderLayer(nn.Module):
+    pass
+
+
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooDecoderLayer"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_flags_unknown_module_name(self):
+        source = """
+class FooDecoderLayer(nn.Module):
+    pass
+
+
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooDecoderLayer", "FooVisionAttention"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        trf022 = self._trf022_violations(file_path, source)
+        self.assertEqual(len(trf022), 1)
+        self.assertIn("FooVisionAttention", trf022[0].message)
+        self.assertIn("FooPreTrainedModel", trf022[0].message)
+        self.assertEqual(trf022[0].line_number, 7)
+
+    def test_trf022_accepts_imported_class(self):
+        source = """
+from ..bar.modeling_bar import BarResidualUnit
+
+
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["BarResidualUnit"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_accepts_class_defined_in_sibling_module(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            (model_dir / "vision.py").write_text(
+                "class FooVisionEncoderLayer(nn.Module):\n    pass\n", encoding="utf-8"
+            )
+            source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooVisionEncoderLayer"]
+"""
+            modeling_path = model_dir / "modeling_foo.py"
+            modeling_path.write_text(source, encoding="utf-8")
+            self.assertEqual(self._trf022_violations(modeling_path, source), [])
+
+    def test_trf022_model_dir_index_is_shared_across_modeling_files(self):
+        # The per-directory class index is cached by directory, so it must stay correct no matter
+        # which modeling file of that directory populated it first.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            first_source = """
+class FooTextDecoderLayer(nn.Module):
+    pass
+
+
+class FooTextPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooTextDecoderLayer"]
+"""
+            second_source = """
+class FooAudioPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooTextDecoderLayer"]
+"""
+            first_path = model_dir / "modeling_foo_text.py"
+            second_path = model_dir / "modeling_foo_audio.py"
+            first_path.write_text(first_source, encoding="utf-8")
+            second_path.write_text(second_source, encoding="utf-8")
+
+            with patch.object(_trf022_mod, "_MODEL_DIR_CLASS_NAMES", {}):
+                first = mlinter.analyze_file(first_path, first_source, enabled_rules={mlinter.TRF022})
+                second = mlinter.analyze_file(second_path, second_source, enabled_rules={mlinter.TRF022})
+            self.assertEqual([v for v in first if v.rule_id == mlinter.TRF022], [])
+            self.assertEqual([v for v in second if v.rule_id == mlinter.TRF022], [])
+
+    def test_trf022_resolves_modular_names_against_generated_modeling_file(self):
+        # A modular file inherits `FooDecoderLayer` implicitly, so the name only appears in the
+        # generated modeling file. That file is a sibling, so the name must still resolve.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            (model_dir / "modeling_foo.py").write_text(
+                "class FooDecoderLayer(nn.Module):\n    pass\n", encoding="utf-8"
+            )
+            source = """
+class FooPreTrainedModel(LlamaPreTrainedModel):
+    _no_split_modules = ["FooDecoderLayer"]
+"""
+            modular_path = model_dir / "modular_foo.py"
+            modular_path.write_text(source, encoding="utf-8")
+            self.assertEqual(self._trf022_violations(modular_path, source), [])
+
+    def test_trf022_flags_unknown_module_name_in_modular_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            (model_dir / "modeling_foo.py").write_text(
+                "class FooDecoderLayer(nn.Module):\n    pass\n", encoding="utf-8"
+            )
+            source = """
+class FooPreTrainedModel(LlamaPreTrainedModel):
+    _no_split_modules = ["BarDecoderLayer"]
+"""
+            modular_path = model_dir / "modular_foo.py"
+            modular_path.write_text(source, encoding="utf-8")
+            violations = self._trf022_violations(modular_path, source)
+            self.assertEqual(len(violations), 1)
+            self.assertIn("BarDecoderLayer", violations[0].message)
+            self.assertEqual(violations[0].line_number, 3)
+
+    def test_trf022_accepts_parametrized_class_created_at_runtime(self):
+        # `torch.nn.utils.parametrize` names its runtime subclasses `Parametrized<cls>`, so no
+        # source file defines them.
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["ParametrizedConv1d"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_flags_bare_parametrized_entry(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["Parametrized"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = self._trf022_violations(file_path, source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("Parametrized", violations[0].message)
+
+    def test_trf022_accepts_timm_wrapper_class_from_another_model_directory(self):
+        # A timm backbone is built from third-party classes, so the wrapper is the smallest unit a
+        # timm-backed model can name -- even though it lives in the `timm_wrapper` directory.
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooEncoderLayer", "TimmWrapperForImageClassification"]
+
+
+class FooEncoderLayer(nn.Module):
+    pass
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_skips_non_model_files(self):
+        source = """
+class FooConfig(PreTrainedConfig):
+    _no_split_modules = ["FooDecoderLayer"]
+"""
+        file_path = Path("src/transformers/models/foo/configuration_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_ignores_none_and_malformed_values(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = None
+
+
+class BarPreTrainedModel(PreTrainedModel):
+    _no_split_modules = []
+
+
+class BazPreTrainedModel(PreTrainedModel):
+    _no_split_modules = SOME_CONSTANT
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    def test_trf022_respects_suppression_comment(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = [
+        # trf-ignore: TRF022
+        "FooVisionAttention",
+    ]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(self._trf022_violations(file_path, source), [])
+
+    # --- TRF023: config fields must use canonical dimension names ---
+
+    def _trf023(self, source, file_name="configuration_foo.py"):
+        file_path = Path(f"src/transformers/models/foo/{file_name}")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF023})
+        return [v for v in violations if v.rule_id == mlinter.TRF023]
+
+    def test_trf023_flags_legacy_dataclass_fields(self):
         source = """
 @strict(accept_kwargs=True)
 class FooConfig(PreTrainedConfig):
@@ -2275,7 +2488,7 @@ class FooConfig(PreTrainedConfig):
     n_heads: int = 16
     n_layers: int = 24
 """
-        violations = self._trf022(source)
+        violations = self._trf023(source)
         self.assertEqual(len(violations), 4)
         messages = " ".join(v.message for v in violations)
         for legacy, canonical in (
@@ -2287,18 +2500,18 @@ class FooConfig(PreTrainedConfig):
             self.assertIn(f"`{legacy}`", messages)
             self.assertIn(f"`{canonical}`", messages)
 
-    def test_trf022_flags_legacy_init_assignment(self):
+    def test_trf023_flags_legacy_init_assignment(self):
         source = """
 class FooConfig(PreTrainedConfig):
     def __init__(self, n_embd=768, **kwargs):
         super().__init__(**kwargs)
         self.n_embd = n_embd
 """
-        violations = self._trf022(source)
+        violations = self._trf023(source)
         self.assertEqual(len(violations), 1)
         self.assertIn("hidden_size", violations[0].message)
 
-    def test_trf022_accepts_canonical_names(self):
+    def test_trf023_accepts_canonical_names(self):
         source = """
 @strict(accept_kwargs=True)
 class FooConfig(PreTrainedConfig):
@@ -2311,51 +2524,51 @@ class FooConfig(PreTrainedConfig):
     num_layers: int = 24
     embed_dim: int = 512
 """
-        self.assertEqual(self._trf022(source), [])
+        self.assertEqual(self._trf023(source), [])
 
-    def test_trf022_reports_each_legacy_field_once(self):
+    def test_trf023_reports_each_legacy_field_once(self):
         source = """
 class FooConfig(PreTrainedConfig):
     def __init__(self, d_model=1024, **kwargs):
         super().__init__(**kwargs)
         self.d_model = d_model
 """
-        self.assertEqual(len(self._trf022(source)), 1)
+        self.assertEqual(len(self._trf023(source)), 1)
 
-    def test_trf022_ignores_non_config_classes_and_files(self):
+    def test_trf023_ignores_non_config_classes_and_files(self):
         source = """
 class FooAttention(nn.Module):
     d_model: int = 1024
 """
-        self.assertEqual(self._trf022(source), [])
+        self.assertEqual(self._trf023(source), [])
         config_source = "class FooConfig(PreTrainedConfig):\n    d_model: int = 1024\n"
-        self.assertEqual(self._trf022(config_source, file_name="modeling_foo.py"), [])
+        self.assertEqual(self._trf023(config_source, file_name="modeling_foo.py"), [])
 
-    def test_trf022_respects_suppression(self):
+    def test_trf023_respects_suppression(self):
         source = """
 class FooConfig(PreTrainedConfig):
-    # trf-ignore: TRF022
+    # trf-ignore: TRF023
     d_model: int = 1024
 """
-        self.assertEqual(self._trf022(source), [])
+        self.assertEqual(self._trf023(source), [])
 
-    def test_trf022_exempts_models_before_cutoff(self):
+    def test_trf023_exempts_models_before_cutoff(self):
         source = "class FooConfig(PreTrainedConfig):\n    d_model: int = 1024\n"
         file_path = Path("src/transformers/models/foo/configuration_foo.py")
         with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2023, 1, 1)):
-            with patch.object(_trf022_mod, "CUTOFF_DATE", "2026-06-20"):
-                violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF022})
-        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF022], [])
+            with patch.object(_trf023_mod, "CUTOFF_DATE", "2026-06-20"):
+                violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF023})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF023], [])
 
-    # --- TRF023: layer dimensions must come from the config ---
+    # --- TRF024: layer dimensions must come from the config ---
 
-    def _trf023(self, source, file_name="modeling_foo.py"):
+    def _trf024(self, source, file_name="modeling_foo.py"):
         file_path = Path(f"src/transformers/models/foo/{file_name}")
         with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
-            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF023})
-        return [v for v in violations if v.rule_id == mlinter.TRF023]
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF024})
+        return [v for v in violations if v.rule_id == mlinter.TRF024]
 
-    def test_trf023_flags_hardcoded_dimensions(self):
+    def test_trf024_flags_hardcoded_dimensions(self):
         source = """
 class FooEmbedding(nn.Module):
     def __init__(self, config):
@@ -2364,12 +2577,12 @@ class FooEmbedding(nn.Module):
         self.norm = nn.LayerNorm(3072)
         self.embed = nn.Embedding(32000, config.hidden_size)
 """
-        violations = self._trf023(source)
+        violations = self._trf024(source)
         self.assertEqual(len(violations), 3)
         self.assertIn("768", violations[0].message)
         self.assertIn("nn.Linear", violations[0].message)
 
-    def test_trf023_flags_keyword_dimensions_and_sequence_shapes(self):
+    def test_trf024_flags_keyword_dimensions_and_sequence_shapes(self):
         source = """
 class FooEmbedding(nn.Module):
     def __init__(self, config):
@@ -2377,10 +2590,10 @@ class FooEmbedding(nn.Module):
         self.proj = nn.Linear(in_features=config.hidden_size, out_features=4096)
         self.norm = nn.LayerNorm((1024,))
 """
-        violations = self._trf023(source)
+        violations = self._trf024(source)
         self.assertEqual(len(violations), 2)
 
-    def test_trf023_allows_config_values_and_small_literals(self):
+    def test_trf024_allows_config_values_and_small_literals(self):
         source = """
 class FooHead(nn.Module):
     def __init__(self, config):
@@ -2391,68 +2604,68 @@ class FooHead(nn.Module):
         self.norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.group = nn.GroupNorm(32, config.hidden_size)
 """
-        self.assertEqual(self._trf023(source), [])
+        self.assertEqual(self._trf024(source), [])
 
-    def test_trf023_ignores_operator_shape_arguments(self):
+    def test_trf024_ignores_operator_shape_arguments(self):
         source = """
 class FooConv(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.conv = nn.Conv1d(config.hidden_size, config.hidden_size, kernel_size=128, padding=64)
 """
-        self.assertEqual(self._trf023(source), [])
+        self.assertEqual(self._trf024(source), [])
 
-    def test_trf023_ignores_unrelated_linear_attribute(self):
+    def test_trf024_ignores_unrelated_linear_attribute(self):
         source = """
 class FooBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.layer = self.registry.Linear(768, 768)
 """
-        self.assertEqual(self._trf023(source), [])
+        self.assertEqual(self._trf024(source), [])
 
-    def test_trf023_respects_suppression_and_file_type(self):
+    def test_trf024_respects_suppression_and_file_type(self):
         source = """
 class FooEmbedding(nn.Module):
     def __init__(self, config):
         super().__init__()
-        # trf-ignore: TRF023
+        # trf-ignore: TRF024
         self.proj = nn.Linear(768, 3072)
 """
-        self.assertEqual(self._trf023(source), [])
+        self.assertEqual(self._trf024(source), [])
         plain = "class FooConfig(PreTrainedConfig):\n    proj = nn.Linear(768, 3072)\n"
-        self.assertEqual(self._trf023(plain, file_name="configuration_foo.py"), [])
+        self.assertEqual(self._trf024(plain, file_name="configuration_foo.py"), [])
 
-    # --- TRF024: masks must be built once in the model, not per layer ---
+    # --- TRF025: masks must be built once in the model, not per layer ---
 
-    def _trf024(self, source, file_name="modeling_foo.py"):
+    def _trf025(self, source, file_name="modeling_foo.py"):
         file_path = Path(f"src/transformers/models/foo/{file_name}")
         with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
-            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF024})
-        return [v for v in violations if v.rule_id == mlinter.TRF024]
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF025})
+        return [v for v in violations if v.rule_id == mlinter.TRF025]
 
-    def test_trf024_flags_mask_creation_inside_a_layer(self):
+    def test_trf025_flags_mask_creation_inside_a_layer(self):
         source = """
 class FooDecoderLayer(nn.Module):
     def forward(self, hidden_states, attention_mask=None, **kwargs):
         attention_mask = create_causal_mask(config=self.config, attention_mask=attention_mask)
         return self.self_attn(hidden_states, attention_mask, **kwargs)
 """
-        violations = self._trf024(source)
+        violations = self._trf025(source)
         self.assertEqual(len(violations), 1)
         self.assertIn("create_causal_mask", violations[0].message)
         self.assertIn("FooDecoderLayer", violations[0].message)
 
-    def test_trf024_flags_custom_mask_factory_in_attention(self):
+    def test_trf025_flags_custom_mask_factory_in_attention(self):
         source = """
 class FooAttention(nn.Module):
     def forward(self, hidden_states, attention_mask=None):
         mask = create_local_causal_valid_mask(hidden_states)
         return hidden_states + mask
 """
-        self.assertEqual(len(self._trf024(source)), 1)
+        self.assertEqual(len(self._trf025(source)), 1)
 
-    def test_trf024_allows_mask_creation_in_the_model(self):
+    def test_trf025_allows_mask_creation_in_the_model(self):
         source = """
 class FooModel(FooPreTrainedModel):
     def forward(self, inputs_embeds, attention_mask=None, **kwargs):
@@ -2467,40 +2680,40 @@ class FooEncoder(nn.Module):
         attention_mask = create_bidirectional_mask(config=self.config, attention_mask=attention_mask)
         return hidden_states
 """
-        self.assertEqual(self._trf024(source), [])
+        self.assertEqual(self._trf025(source), [])
 
-    def test_trf024_allows_layer_consuming_a_prepared_mask(self):
+    def test_trf025_allows_layer_consuming_a_prepared_mask(self):
         source = """
 class FooDecoderLayer(nn.Module):
     def forward(self, hidden_states, attention_mask=None, **kwargs):
         return self.self_attn(hidden_states, attention_mask, **kwargs)
 """
-        self.assertEqual(self._trf024(source), [])
+        self.assertEqual(self._trf025(source), [])
 
-    def test_trf024_respects_suppression_and_file_type(self):
+    def test_trf025_respects_suppression_and_file_type(self):
         source = """
-# trf-ignore: TRF024
+# trf-ignore: TRF025
 class FooDecoderLayer(nn.Module):
     def forward(self, hidden_states, attention_mask=None):
         return create_causal_mask(config=self.config, attention_mask=attention_mask)
 """
-        self.assertEqual(self._trf024(source), [])
+        self.assertEqual(self._trf025(source), [])
         plain = """
 class FooLayer(nn.Module):
     def forward(self, x):
         return create_causal_mask(x)
 """
-        self.assertEqual(self._trf024(plain, file_name="processing_foo.py"), [])
+        self.assertEqual(self._trf025(plain, file_name="processing_foo.py"), [])
 
-    # --- TRF025: a module that only forwards to its single submodule ---
+    # --- TRF026: a module that only forwards to its single submodule ---
 
-    def _trf025(self, source, file_name="modeling_foo.py"):
+    def _trf026(self, source, file_name="modeling_foo.py"):
         file_path = Path(f"src/transformers/models/foo/{file_name}")
         with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
-            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF025})
-        return [v for v in violations if v.rule_id == mlinter.TRF025]
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF026})
+        return [v for v in violations if v.rule_id == mlinter.TRF026]
 
-    def test_trf025_flags_pass_through_wrapper(self):
+    def test_trf026_flags_pass_through_wrapper(self):
         source = """
 class FooAtomTransformer(nn.Module):
     def __init__(self, config):
@@ -2510,12 +2723,12 @@ class FooAtomTransformer(nn.Module):
     def forward(self, hidden_states, **kwargs):
         return self.encoder(hidden_states, **kwargs)
 """
-        violations = self._trf025(source)
+        violations = self._trf026(source)
         self.assertEqual(len(violations), 1)
         self.assertIn("FooAtomTransformer", violations[0].message)
         self.assertIn("self.encoder", violations[0].message)
 
-    def test_trf025_flags_wrapper_with_docstring(self):
+    def test_trf026_flags_wrapper_with_docstring(self):
         source = '''
 class FooValueEmbedding(nn.Module):
     def __init__(self, config):
@@ -2526,9 +2739,9 @@ class FooValueEmbedding(nn.Module):
         """Project the inputs."""
         return self.value_projection(hidden_states)
 '''
-        self.assertEqual(len(self._trf025(source)), 1)
+        self.assertEqual(len(self._trf026(source)), 1)
 
-    def test_trf025_allows_module_doing_extra_work(self):
+    def test_trf026_allows_module_doing_extra_work(self):
         source = """
 class FooBlock(nn.Module):
     def __init__(self, config):
@@ -2539,9 +2752,9 @@ class FooBlock(nn.Module):
     def forward(self, hidden_states, **kwargs):
         return self.norm(self.encoder(hidden_states, **kwargs))
 """
-        self.assertEqual(self._trf025(source), [])
+        self.assertEqual(self._trf026(source), [])
 
-    def test_trf025_allows_extra_statement_or_method(self):
+    def test_trf026_allows_extra_statement_or_method(self):
         residual = """
 class FooBlock(nn.Module):
     def __init__(self, config):
@@ -2552,7 +2765,7 @@ class FooBlock(nn.Module):
         residual = hidden_states
         return residual + self.encoder(hidden_states, **kwargs)
 """
-        self.assertEqual(self._trf025(residual), [])
+        self.assertEqual(self._trf026(residual), [])
         extra_method = """
 class FooBlock(nn.Module):
     def __init__(self, config):
@@ -2565,9 +2778,9 @@ class FooBlock(nn.Module):
     def forward(self, hidden_states, **kwargs):
         return self.encoder(hidden_states, **kwargs)
 """
-        self.assertEqual(self._trf025(extra_method), [])
+        self.assertEqual(self._trf026(extra_method), [])
 
-    def test_trf025_exempts_pretrained_model_subclasses(self):
+    def test_trf026_exempts_pretrained_model_subclasses(self):
         source = """
 class FooModel(FooPreTrainedModel):
     def __init__(self, config):
@@ -2577,9 +2790,55 @@ class FooModel(FooPreTrainedModel):
     def forward(self, hidden_states, **kwargs):
         return self.encoder(hidden_states, **kwargs)
 """
-        self.assertEqual(self._trf025(source), [])
+        self.assertEqual(self._trf026(source), [])
 
-    def test_trf025_allows_delegating_to_a_different_attribute(self):
+    def test_trf026_exempts_modular_class_inheriting_an_imported_model(self):
+        # `LlamaModel` is a PreTrainedModel, but it is imported, so the base cannot be resolved from
+        # this file. Flagging it would report a public model class as a pass-through wrapper.
+        source = """
+from ..llama.modeling_llama import LlamaModel
+
+class FooModel(LlamaModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.language_model = FooTextModel(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.language_model(hidden_states, **kwargs)
+"""
+        self.assertEqual(self._trf026(source, file_name="modular_foo.py"), [])
+        # The same holds one level down, through a locally defined subclass of the imported base.
+        indirect = (
+            source
+            + """
+class FooDecoder(FooModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+        )
+        self.assertEqual(self._trf026(indirect, file_name="modular_foo.py"), [])
+
+    def test_trf026_still_flags_plain_module_bases_in_modular(self):
+        # GradientCheckpointingLayer and anything under `torch.nn` are known not to be models, so an
+        # unresolvable-base exemption must not swallow these.
+        for base in ("nn.Module", "torch.nn.Module", "GradientCheckpointingLayer"):
+            source = f"""
+class FooAtomTransformer({base}):
+    def __init__(self, config):
+        super().__init__()
+        self.encoder = FooEncoder(config)
+
+    def forward(self, hidden_states, **kwargs):
+        return self.encoder(hidden_states, **kwargs)
+"""
+            with self.subTest(base=base):
+                self.assertEqual(len(self._trf026(source, file_name="modular_foo.py")), 1)
+
+    def test_trf026_allows_delegating_to_a_different_attribute(self):
         source = """
 class FooBlock(nn.Module):
     def __init__(self, config):
@@ -2589,11 +2848,11 @@ class FooBlock(nn.Module):
     def forward(self, hidden_states, **kwargs):
         return self.encoder.layers[0](hidden_states, **kwargs)
 """
-        self.assertEqual(self._trf025(source), [])
+        self.assertEqual(self._trf026(source), [])
 
-    def test_trf025_respects_suppression(self):
+    def test_trf026_respects_suppression(self):
         source = """
-# trf-ignore: TRF025
+# trf-ignore: TRF026
 class FooAtomTransformer(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -2602,9 +2861,9 @@ class FooAtomTransformer(nn.Module):
     def forward(self, hidden_states, **kwargs):
         return self.encoder(hidden_states, **kwargs)
 """
-        self.assertEqual(self._trf025(source), [])
+        self.assertEqual(self._trf026(source), [])
 
-    # --- TRF026: no bare assert in model files ---
+    # --- TRF027: no bare assert in model files ---
 
     def _run(self, rule, source, file_name="modeling_foo.py"):
         file_path = Path(f"src/transformers/models/foo/{file_name}")
@@ -2612,18 +2871,18 @@ class FooAtomTransformer(nn.Module):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={rule})
         return [v for v in violations if v.rule_id == rule]
 
-    def test_trf026_flags_assert(self):
+    def test_trf027_flags_assert(self):
         source = """
 class FooAttention(nn.Module):
     def forward(self, hidden_states):
         assert hidden_states.dim() == 3
         return hidden_states
 """
-        violations = self._run(mlinter.TRF026, source)
+        violations = self._run(mlinter.TRF027, source)
         self.assertEqual(len(violations), 1)
         self.assertIn("assert", violations[0].message)
 
-    def test_trf026_accepts_raise_and_skips_other_files(self):
+    def test_trf027_accepts_raise_and_skips_other_files(self):
         source = """
 class FooAttention(nn.Module):
     def forward(self, hidden_states):
@@ -2631,78 +2890,139 @@ class FooAttention(nn.Module):
             raise ValueError("expected 3D")
         return hidden_states
 """
-        self.assertEqual(self._run(mlinter.TRF026, source), [])
+        self.assertEqual(self._run(mlinter.TRF027, source), [])
         assert_source = "def f(x):\n    assert x\n"
-        self.assertEqual(self._run(mlinter.TRF026, assert_source, file_name="processing_foo.py"), [])
+        self.assertEqual(self._run(mlinter.TRF027, assert_source, file_name="processing_foo.py"), [])
 
-    def test_trf026_respects_suppression(self):
+    def test_trf027_respects_suppression(self):
         source = """
 def f(x):
-    # trf-ignore: TRF026
+    # trf-ignore: TRF027
     assert x
 """
-        self.assertEqual(self._run(mlinter.TRF026, source), [])
-
-    # --- TRF027: Apache license header ---
-
-    def test_trf027_flags_missing_header(self):
-        violations = self._run(mlinter.TRF027, '"""PyTorch Foo model."""\n\nimport torch\n')
-        self.assertEqual(len(violations), 1)
-        self.assertEqual(violations[0].line_number, 1)
-
-    def test_trf027_accepts_header(self):
-        source = "# Copyright 2026 The HuggingFace Team.\n# Licensed under the Apache License, Version 2.0\n\nimport torch\n"
         self.assertEqual(self._run(mlinter.TRF027, source), [])
 
-    def test_trf027_ignores_unrelated_files(self):
-        self.assertEqual(self._run(mlinter.TRF027, "import torch\n", file_name="tokenization_foo.py"), [])
+    # --- TRF028: Apache license header ---
 
-    # --- TRF028: config plus a redundant config field ---
+    def test_trf028_flags_missing_header(self):
+        violations = self._run(mlinter.TRF028, '"""PyTorch Foo model."""\n\nimport torch\n')
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line_number, 1)
+        self.assertIn("missing the license header", violations[0].message)
 
-    def test_trf028_flags_redundant_config_arguments(self):
+    def test_trf028_accepts_header(self):
+        self.assertEqual(self._run(mlinter.TRF028, LICENSE_HEADER + "\nimport torch\n"), [])
+
+    def test_trf028_accepts_header_below_the_generated_file_banner(self):
+        banner = "#  🚨 This file was automatically generated from modular_foo.py.\n#  Do NOT edit it manually.\n"
+        self.assertEqual(self._run(mlinter.TRF028, banner + LICENSE_HEADER + "\nimport torch\n"), [])
+
+    def test_trf028_flags_truncated_header(self):
+        # bitnet ships this: everything but the closing `limitations under the License.`
+        truncated = LICENSE_HEADER.rsplit("\n", 2)[0] + "\n"
+        violations = self._run(mlinter.TRF028, truncated + "\nimport torch\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("limitations under the license.", violations[0].message)
+
+    def test_trf028_flags_header_mangled_by_search_and_replace(self):
+        # tvp and bridgetower ship this: a stray `=` inserted before every comma.
+        mangled = LICENSE_HEADER.replace(",", "=,")
+        violations = self._run(mlinter.TRF028, mangled + "\nimport torch\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("incomplete license header", violations[0].message)
+
+    def test_trf028_accepts_a_non_apache_license(self):
+        # Not every model is Apache 2.0: blip is BSD-3-clause and sapiens2 carries Meta's own
+        # license. Both spell out the same warranty paragraph, which is what the rule checks.
+        bsd3 = LICENSE_HEADER.replace(
+            'Apache License, Version 2.0 (the "License")', 'BSD-3-clause license (the "License")'
+        ).replace("http://www.apache.org/licenses/LICENSE-2.0", "https://opensource.org/licenses/BSD-3-Clause")
+        sapiens = """# Copyright 2026 Meta Platforms, Inc. and the HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Sapiens2 License. You may obtain a copy of the License at
+#
+#     https://github.com/facebookresearch/sapiens2/blob/main/LICENSE.md
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""
+        for name, header in (("bsd-3-clause", bsd3), ("sapiens2", sapiens)):
+            with self.subTest(license=name):
+                self.assertEqual(self._run(mlinter.TRF028, header + "\nimport torch\n"), [])
+
+    def test_trf028_flags_a_header_that_never_names_a_license(self):
+        # The warranty paragraph alone, with no "Licensed under the ..." line above it.
+        headless = "\n".join(LICENSE_HEADER.splitlines()[4:]) + "\n"
+        violations = self._run(mlinter.TRF028, headless + "\nimport torch\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("does not state what license the file is under", violations[0].message)
+
+    def test_trf028_accepts_any_copyright_attribution(self):
+        # The year and the attributed team legitimately vary; only the boilerplate is checked.
+        for line in (
+            "# Copyright 2023 The Intel AIA Team Authors, and HuggingFace Inc. team. All rights reserved.",
+            "# Copyright 2019 The Google AI Language Team Authors.",
+        ):
+            source = line + "\n" + LICENSE_HEADER.split("\n", 1)[1] + "\nimport torch\n"
+            with self.subTest(copyright=line):
+                self.assertEqual(self._run(mlinter.TRF028, source), [])
+
+    def test_trf028_respects_suppression(self):
+        source = "# trf-ignore: TRF028\n\nimport torch\n"
+        self.assertEqual(self._run(mlinter.TRF028, source), [])
+
+    def test_trf028_ignores_unrelated_files(self):
+        self.assertEqual(self._run(mlinter.TRF028, "import torch\n", file_name="tokenization_foo.py"), [])
+
+    # --- TRF029: config plus a redundant config field ---
+
+    def test_trf029_flags_redundant_config_arguments(self):
         source = """
 class FooAttention(nn.Module):
     def __init__(self, config, embed_dim, num_heads, dropout=0.0):
         super().__init__()
         self.embed_dim = embed_dim
 """
-        violations = self._run(mlinter.TRF028, source)
+        violations = self._run(mlinter.TRF029, source)
         self.assertEqual(len(violations), 1)
         for name in ("embed_dim", "num_heads", "dropout"):
             self.assertIn(name, violations[0].message)
 
-    def test_trf028_accepts_config_only_and_layer_idx(self):
+    def test_trf029_accepts_config_only_and_layer_idx(self):
         source = """
 class FooAttention(nn.Module):
     def __init__(self, config, layer_idx=None, device=None, **kwargs):
         super().__init__()
         self.embed_dim = config.hidden_size
 """
-        self.assertEqual(self._run(mlinter.TRF028, source), [])
+        self.assertEqual(self._run(mlinter.TRF029, source), [])
 
-    def test_trf028_ignores_modules_without_config(self):
+    def test_trf029_ignores_modules_without_config(self):
         source = """
 class FooRotary(nn.Module):
     def __init__(self, head_dim, rope_theta):
         super().__init__()
         self.head_dim = head_dim
 """
-        self.assertEqual(self._run(mlinter.TRF028, source), [])
+        self.assertEqual(self._run(mlinter.TRF029, source), [])
 
-    # --- TRF029: config attribute chain depth ---
+    # --- TRF030: config attribute chain depth ---
 
-    def test_trf029_flags_three_level_config_chain(self):
+    def test_trf030_flags_three_level_config_chain(self):
         source = """
 class FooAtomEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.norm = FooLayerNorm(config.diffusion_config.atom_encoder_config.hidden_size)
 """
-        violations = self._run(mlinter.TRF029, source)
+        violations = self._run(mlinter.TRF030, source)
         self.assertEqual(len(violations), 1)
         self.assertIn("3 levels", violations[0].message)
 
-    def test_trf029_accepts_one_and_two_hops(self):
+    def test_trf030_accepts_one_and_two_hops(self):
         source = """
 class FooAttention(nn.Module):
     def __init__(self, config):
@@ -2711,30 +3031,30 @@ class FooAttention(nn.Module):
         self.b = config.text_config.hidden_size
         self.c = self.config.vision_config.num_attention_heads
 """
-        self.assertEqual(self._run(mlinter.TRF029, source), [])
+        self.assertEqual(self._run(mlinter.TRF030, source), [])
 
-    def test_trf029_reports_once_per_line(self):
+    def test_trf030_reports_once_per_line(self):
         source = """
 class FooBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.a = config.x.y.hidden_size + config.x.y.intermediate_size
 """
-        self.assertEqual(len(self._run(mlinter.TRF029, source)), 1)
+        self.assertEqual(len(self._run(mlinter.TRF030, source)), 1)
 
-    # --- TRF030: dataclass must inherit ModelOutput ---
+    # --- TRF031: dataclass must inherit ModelOutput ---
 
-    def test_trf030_flags_plain_dataclass(self):
+    def test_trf031_flags_plain_dataclass(self):
         source = """
 @dataclass
 class FooStructureOutput:
     positions: torch.Tensor
 """
-        violations = self._run(mlinter.TRF030, source)
+        violations = self._run(mlinter.TRF031, source)
         self.assertEqual(len(violations), 1)
         self.assertIn("ModelOutput", violations[0].message)
 
-    def test_trf030_accepts_model_output_bases(self):
+    def test_trf031_accepts_model_output_bases(self):
         source = """
 @auto_docstring
 @dataclass
@@ -2751,24 +3071,24 @@ class FooModelOutputWithPast(BaseModelOutputWithPast):
 class FooProjectionAttentions(BaseModelOutputWithPooling):
     projection_attentions: torch.Tensor
 """
-        self.assertEqual(self._run(mlinter.TRF030, source), [])
+        self.assertEqual(self._run(mlinter.TRF031, source), [])
 
-    def test_trf030_ignores_non_dataclasses(self):
-        self.assertEqual(self._run(mlinter.TRF030, "class FooConfigHolder:\n    x: int\n"), [])
+    def test_trf031_ignores_non_dataclasses(self):
+        self.assertEqual(self._run(mlinter.TRF031, "class FooConfigHolder:\n    x: int\n"), [])
 
-    # --- TRF031: masked fill must use torch.finfo(dtype).min ---
+    # --- TRF032: masked fill must use torch.finfo(dtype).min ---
 
-    def test_trf031_flags_magic_negative(self):
+    def test_trf032_flags_magic_negative(self):
         source = """
 class FooAttention(nn.Module):
     def forward(self, scores, mask):
         return scores.masked_fill(~mask, -1e9)
 """
-        violations = self._run(mlinter.TRF031, source)
+        violations = self._run(mlinter.TRF032, source)
         self.assertEqual(len(violations), 1)
         self.assertIn("finfo", violations[0].message)
 
-    def test_trf031_accepts_finfo_and_small_values(self):
+    def test_trf032_accepts_finfo_and_small_values(self):
         source = """
 class FooAttention(nn.Module):
     def forward(self, scores, mask):
@@ -2776,28 +3096,28 @@ class FooAttention(nn.Module):
         pad = torch.full_like(scores, -1.0)
         return scores + pad
 """
-        self.assertEqual(self._run(mlinter.TRF031, source), [])
+        self.assertEqual(self._run(mlinter.TRF032, source), [])
 
-    def test_trf031_reports_once_per_call(self):
+    def test_trf032_reports_once_per_call(self):
         source = """
 def f(scores, mask):
     return scores.masked_fill(~mask, -1e9).masked_fill(~mask, -1e4)
 """
-        self.assertEqual(len(self._run(mlinter.TRF031, source)), 2)
+        self.assertEqual(len(self._run(mlinter.TRF032, source)), 2)
 
-    # --- TRF032: no set_<hyperparameter> mutators ---
+    # --- TRF033: no set_<hyperparameter> mutators ---
 
-    def test_trf032_flags_hyperparameter_setter(self):
+    def test_trf033_flags_hyperparameter_setter(self):
         source = """
 class FooTriangleAttention(nn.Module):
     def set_chunk_size(self, chunk_size):
         self.chunk_size = chunk_size
 """
-        violations = self._run(mlinter.TRF032, source)
+        violations = self._run(mlinter.TRF033, source)
         self.assertEqual(len(violations), 1)
         self.assertIn("set_chunk_size", violations[0].message)
 
-    def test_trf032_accepts_sanctioned_setters(self):
+    def test_trf033_accepts_sanctioned_setters(self):
         source = """
 class FooModel(FooPreTrainedModel):
     def set_input_embeddings(self, value):
@@ -2809,11 +3129,11 @@ class FooModel(FooPreTrainedModel):
     def set_decoder(self, decoder):
         self.decoder = decoder
 """
-        self.assertEqual(self._run(mlinter.TRF032, source), [])
+        self.assertEqual(self._run(mlinter.TRF033, source), [])
 
-    # --- TRF033: ModuleList layers must be GradientCheckpointingLayer ---
+    # --- TRF034: ModuleList layers must be GradientCheckpointingLayer ---
 
-    def test_trf033_flags_plain_module_layer(self):
+    def test_trf034_flags_plain_module_layer(self):
         source = """
 class FooDecoderLayer(nn.Module):
     def __init__(self, config, layer_idx):
@@ -2825,12 +3145,12 @@ class FooModel(FooPreTrainedModel):
         super().__init__(config)
         self.layers = nn.ModuleList([FooDecoderLayer(config, i) for i in range(config.num_hidden_layers)])
 """
-        violations = self._run(mlinter.TRF033, source)
+        violations = self._run(mlinter.TRF034, source)
         self.assertEqual(len(violations), 1)
         self.assertIn("FooDecoderLayer", violations[0].message)
         self.assertIn("GradientCheckpointingLayer", violations[0].message)
 
-    def test_trf033_accepts_gradient_checkpointing_layer(self):
+    def test_trf034_accepts_gradient_checkpointing_layer(self):
         source = """
 class FooDecoderLayer(GradientCheckpointingLayer):
     def __init__(self, config, layer_idx):
@@ -2842,9 +3162,9 @@ class FooModel(FooPreTrainedModel):
         super().__init__(config)
         self.layers = nn.ModuleList([FooDecoderLayer(config, i) for i in range(config.num_hidden_layers)])
 """
-        self.assertEqual(self._run(mlinter.TRF033, source), [])
+        self.assertEqual(self._run(mlinter.TRF034, source), [])
 
-    def test_trf033_follows_local_inheritance(self):
+    def test_trf034_follows_local_inheritance(self):
         source = """
 class FooBaseLayer(GradientCheckpointingLayer):
     pass
@@ -2859,9 +3179,9 @@ class FooModel(FooPreTrainedModel):
         super().__init__(config)
         self.layers = nn.ModuleList([FooDecoderLayer(config) for _ in range(2)])
 """
-        self.assertEqual(self._run(mlinter.TRF033, source), [])
+        self.assertEqual(self._run(mlinter.TRF034, source), [])
 
-    def test_trf033_ignores_non_layer_modulelists(self):
+    def test_trf034_ignores_non_layer_modulelists(self):
         source = """
 class FooExpert(nn.Module):
     pass
@@ -2873,38 +3193,38 @@ class FooModel(FooPreTrainedModel):
         self.experts = nn.ModuleList([FooExpert(config) for _ in range(4)])
         self.heads = nn.ModuleList([nn.Linear(config.hidden_size, 2) for _ in range(3)])
 """
-        self.assertEqual(self._run(mlinter.TRF033, source), [])
+        self.assertEqual(self._run(mlinter.TRF034, source), [])
 
-    # --- TRF034: no # noqa in model files ---
+    # --- TRF035: no # noqa in model files ---
 
-    def test_trf034_flags_noqa(self):
+    def test_trf035_flags_noqa(self):
         source = "from ...modeling_utils import PreTrainedModel  # noqa: F401\n"
-        violations = self._run(mlinter.TRF034, source)
+        violations = self._run(mlinter.TRF035, source)
         self.assertEqual(len(violations), 1)
         self.assertIn("F401", violations[0].message)
 
-    def test_trf034_flags_bare_noqa_and_skips_other_files(self):
-        self.assertEqual(len(self._run(mlinter.TRF034, "import torch  # noqa\n")), 1)
-        self.assertEqual(self._run(mlinter.TRF034, "import torch  # noqa\n", file_name="processing_foo.py"), [])
+    def test_trf035_flags_bare_noqa_and_skips_other_files(self):
+        self.assertEqual(len(self._run(mlinter.TRF035, "import torch  # noqa\n")), 1)
+        self.assertEqual(self._run(mlinter.TRF035, "import torch  # noqa\n", file_name="processing_foo.py"), [])
 
-    def test_trf034_respects_suppression(self):
-        source = "# trf-ignore: TRF034\nimport torch  # noqa: F401\n"
-        self.assertEqual(self._run(mlinter.TRF034, source), [])
+    def test_trf035_respects_suppression(self):
+        source = "# trf-ignore: TRF035\nimport torch  # noqa: F401\n"
+        self.assertEqual(self._run(mlinter.TRF035, source), [])
 
-    # --- TRF035: no nn.Sequential in modeling ---
+    # --- TRF036: no nn.Sequential in modeling ---
 
-    def test_trf035_flags_sequential(self):
+    def test_trf036_flags_sequential(self):
         source = """
 class FooMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.mlp = nn.Sequential(nn.Linear(config.hidden_size, config.intermediate_size), nn.GELU())
 """
-        violations = self._run(mlinter.TRF035, source)
+        violations = self._run(mlinter.TRF036, source)
         self.assertEqual(len(violations), 1)
         self.assertIn("nn.Sequential", violations[0].message)
 
-    def test_trf035_accepts_explicit_submodules(self):
+    def test_trf036_accepts_explicit_submodules(self):
         source = """
 class FooMLP(nn.Module):
     def __init__(self, config):
@@ -2912,30 +3232,30 @@ class FooMLP(nn.Module):
         self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size)
         self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
 """
-        self.assertEqual(self._run(mlinter.TRF035, source), [])
+        self.assertEqual(self._run(mlinter.TRF036, source), [])
 
-    # --- TRF036: no torch.einsum in modeling (opt-in) ---
+    # --- TRF037: no torch.einsum in modeling (opt-in) ---
 
-    def test_trf036_flags_einsum_with_equation(self):
+    def test_trf037_flags_einsum_with_equation(self):
         source = """
 class FooAttention(nn.Module):
     def forward(self, q, k):
         return torch.einsum("bqhc,bkhc->bhqk", q, k)
 """
-        violations = self._run(mlinter.TRF036, source)
+        violations = self._run(mlinter.TRF037, source)
         self.assertEqual(len(violations), 1)
         self.assertIn("bqhc,bkhc->bhqk", violations[0].message)
 
-    def test_trf036_is_disabled_by_default(self):
-        self.assertNotIn(mlinter.TRF036, mlinter.DEFAULT_ENABLED_TRF_RULES)
+    def test_trf037_is_disabled_by_default(self):
+        self.assertNotIn(mlinter.TRF037, mlinter.DEFAULT_ENABLED_TRF_RULES)
 
-    def test_trf036_accepts_explicit_matmul(self):
+    def test_trf037_accepts_explicit_matmul(self):
         source = """
 class FooAttention(nn.Module):
     def forward(self, q, k):
         return q.permute(0, 2, 1, 3) @ k.permute(0, 2, 3, 1)
 """
-        self.assertEqual(self._run(mlinter.TRF036, source), [])
+        self.assertEqual(self._run(mlinter.TRF037, source), [])
 
 
 if __name__ == "__main__":

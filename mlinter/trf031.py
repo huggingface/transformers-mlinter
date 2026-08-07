@@ -12,29 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF031: Masked positions must be filled with torch.finfo(dtype).min, not a magic negative number."""
+"""TRF031: Dataclasses in modeling files must inherit ModelOutput."""
 
 import ast
 from pathlib import Path
 
-from ._helpers import Violation, _has_rule_suppression, call_leaf_name, is_exempt_by_cutoff
+from ._helpers import Violation, _has_rule_suppression, full_name, is_exempt_by_cutoff
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
 
-FILL_FUNCTIONS = {"masked_fill", "masked_fill_", "full", "full_like", "new_full"}
-# Anything this large is standing in for negative infinity rather than being a real value.
-MAGIC_MAGNITUDE = 1e3
 
-
-def _magic_negative(node: ast.AST) -> float | None:
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-        inner = node.operand
-        if isinstance(inner, ast.Constant) and isinstance(inner.value, int | float):
-            if not isinstance(inner.value, bool) and abs(inner.value) >= MAGIC_MAGNITUDE:
-                return -float(inner.value)
-    return None
+def _is_dataclass(class_node: ast.ClassDef) -> bool:
+    for decorator in class_node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        try:
+            if full_name(target).split(".")[-1] == "dataclass":
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
@@ -44,27 +42,29 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         return []
 
     violations: list[Violation] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+    for class_node in tree.body:
+        if not isinstance(class_node, ast.ClassDef) or not _is_dataclass(class_node):
             continue
-        leaf = call_leaf_name(node)
-        if leaf not in FILL_FUNCTIONS:
-            continue
-        for argument in list(node.args) + [keyword.value for keyword in node.keywords]:
-            value = _magic_negative(argument)
-            if value is None:
+        base_names = []
+        for base in class_node.bases:
+            try:
+                base_names.append(full_name(base).split(".")[-1])
+            except ValueError:
                 continue
-            if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
-                break
-            violations.append(
-                Violation(
-                    file_path=file_path,
-                    line_number=node.lineno,
-                    message=(
-                        f"{RULE_ID}: `{leaf}` fills with the magic value {value:g}. "
-                        "Use `torch.finfo(dtype).min` so the fill is correct in every dtype."
-                    ),
-                )
+        # Any base carrying `Output` in its name is a ModelOutput subclass: ModelOutput itself, one of
+        # the BaseModelOutputWith* variants, or another model's output class.
+        if any("Output" in name for name in base_names):
+            continue
+        if _has_rule_suppression(source_lines, RULE_ID, class_node.lineno):
+            continue
+        violations.append(
+            Violation(
+                file_path=file_path,
+                line_number=class_node.lineno,
+                message=(
+                    f"{RULE_ID}: `{class_node.name}` is a plain dataclass. "
+                    "Inherit `ModelOutput` so it indexes like a tuple and picks up @auto_docstring."
+                ),
             )
-            break
+        )
     return violations

@@ -12,33 +12,47 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF029: Reaching more than one sub-config deep means the module was handed the wrong config."""
+"""TRF029: A module taking `config` must not also take arguments that live on the config."""
 
 import ast
 from pathlib import Path
 
-from ._helpers import Violation, _has_rule_suppression, full_name, is_exempt_by_cutoff
+from ._helpers import Violation, _has_rule_suppression, is_exempt_by_cutoff
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
 
-# `config.hidden_size` is one hop and `config.text_config.hidden_size` is two, which is the normal
-# sub-config access. Three or more means the module is digging through a hierarchy it should have been
-# given a branch of.
-MAX_CONFIG_HOPS = 2
-
-
-def _config_hops(node: ast.Attribute) -> int:
-    """Number of attribute hops after the `config` root, or 0 when the chain is not rooted there."""
-    try:
-        dotted = full_name(node)
-    except ValueError:
-        return 0
-    body = dotted.removeprefix("self.")
-    if not body.startswith("config."):
-        return 0
-    return body.count(".")
+# Argument names that are unambiguously config fields. Passing one of these next to `config` means the
+# same number now has two sources of truth, and the caller decides which one wins.
+CONFIG_FIELD_ARGUMENTS = {
+    "attention_dropout",
+    "d_model",
+    "dropout",
+    "embed_dim",
+    "eps",
+    "head_dim",
+    "hidden_act",
+    "hidden_dropout",
+    "hidden_size",
+    "image_size",
+    "initializer_range",
+    "intermediate_size",
+    "layer_norm_eps",
+    "max_position_embeddings",
+    "mlp_ratio",
+    "n_heads",
+    "n_layers",
+    "num_attention_heads",
+    "num_channels",
+    "num_heads",
+    "num_hidden_layers",
+    "num_key_value_heads",
+    "patch_size",
+    "rms_norm_eps",
+    "rope_theta",
+    "vocab_size",
+}
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
@@ -48,24 +62,29 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         return []
 
     violations: list[Violation] = []
-    reported: set[int] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Attribute):
+    for class_node in ast.walk(tree):
+        if not isinstance(class_node, ast.ClassDef):
             continue
-        hops = _config_hops(node)
-        if hops <= MAX_CONFIG_HOPS or node.lineno in reported:
-            continue
-        if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
-            continue
-        reported.add(node.lineno)
-        violations.append(
-            Violation(
-                file_path=file_path,
-                line_number=node.lineno,
-                message=(
-                    f"{RULE_ID}: `{full_name(node)}` reaches {hops} levels into the config. "
-                    "Pass the relevant sub-config to the module instead of walking the hierarchy."
-                ),
+        for item in class_node.body:
+            if not isinstance(item, ast.FunctionDef) or item.name != "__init__":
+                continue
+            names = [arg.arg for arg in item.args.args] + [arg.arg for arg in item.args.kwonlyargs]
+            if "config" not in names:
+                continue
+            redundant = [name for name in names if name in CONFIG_FIELD_ARGUMENTS]
+            if not redundant:
+                continue
+            if _has_rule_suppression(source_lines, RULE_ID, item.lineno):
+                continue
+            rendered = ", ".join(f"`{name}`" for name in redundant)
+            violations.append(
+                Violation(
+                    file_path=file_path,
+                    line_number=item.lineno,
+                    message=(
+                        f"{RULE_ID}: `{class_node.name}.__init__` takes `config` and also {rendered}. "
+                        "Read those off the config inside the module so there is one source of truth."
+                    ),
+                )
             )
-        )
     return violations

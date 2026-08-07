@@ -598,6 +598,7 @@ def main() -> int:
             # Exclude parse-error sentinels (rule_id=None) from the rules summary.
             rules_used = sorted({v.rule_id for v in violations if v.rule_id})
             payload = {
+                # May include parse-error sentinels with rule=null (no associated rule).
                 "findings": [
                     {"path": str(v.file_path), "line": v.line_number, "rule": v.rule_id, "message": v.message}
                     for v in violations

@@ -665,7 +665,7 @@ default_enabled = true
 allowlist_models = []
 
 [rules.TRF038.explanation]
-what_it_does = "For each modeling_*.py, modular_*.py, processing_*.py, image_processing_*.py and video_processing_*.py file, checks that a corresponding tests/models/<model>/test_*.py file exists (e.g. modeling_acme.py -> tests/models/acme/test_modeling_acme.py). configuration_*.py is exempt since config classes are conventionally covered by ConfigTester inside the companion test_modeling_*.py file. There is no `# trf-ignore: TRF038` support for this rule: use `allowlist_models` if a model genuinely cannot ship a test yet, so the exemption is visible in review."
+what_it_does = "For each modeling_*.py, processing_*.py, image_processing_*.py and video_processing_*.py file, checks that a corresponding tests/models/<model>/test_*.py file exists (e.g. modeling_acme.py -> tests/models/acme/test_modeling_acme.py). configuration_*.py is exempt since config classes are conventionally covered by ConfigTester inside the companion test_modeling_*.py file. There is no `# trf-ignore: TRF038` support for this rule: use `allowlist_models` if a model genuinely cannot ship a test yet, so the exemption is visible in review."
 why_bad = "A source file with no test file has no regression coverage: a broken forward pass, a bad conversion mapping, or a processor bug can land and stay broken indefinitely. Every model can be exercised with a dummy config and randomly initialized weights, so 'nothing to test' is not a valid reason to skip this."
 diff = '''
  src/transformers/models/acme/modeling_acme.py

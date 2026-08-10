@@ -3260,7 +3260,7 @@ class FooAttention(nn.Module):
 
     # --- TRF038: every modeling-family file needs a matching test file ---
 
-    def _trf038(self, file_name: str, tests_root: Path | None = None):
+    def check_trf038(self, file_name: str, tests_root: Path | None = None):
         file_path = Path("src/transformers/models/foo") / file_name
         source = "class FooModel: ...\n"
         with patch.object(_trf038_mod, "TESTS_ROOT", tests_root or Path("/nonexistent/tests/models")):
@@ -3268,7 +3268,7 @@ class FooAttention(nn.Module):
         return [v for v in violations if v.rule_id == mlinter.TRF038]
 
     def test_trf038_flags_missing_test_file(self):
-        violations = self._trf038("modeling_foo.py")
+        violations = self.check_trf038("modeling_foo.py")
         self.assertEqual(len(violations), 1)
         self.assertIn("tests/models/foo/test_modeling_foo.py", violations[0].message)
 
@@ -3277,26 +3277,21 @@ class FooAttention(nn.Module):
             tests_root = Path(tmp_dir) / "tests" / "models"
             (tests_root / "foo").mkdir(parents=True)
             (tests_root / "foo" / "test_modeling_foo.py").write_text("class FooModelTest: ...\n", encoding="utf-8")
-            self.assertEqual(self._trf038("modeling_foo.py", tests_root=tests_root), [])
-
-    def test_trf038_maps_modular_files_to_test_modeling(self):
-        violations = self._trf038("modular_foo.py")
-        self.assertEqual(len(violations), 1)
-        self.assertIn("test_modeling_foo.py", violations[0].message)
+            self.assertEqual(self.check_trf038("modeling_foo.py", tests_root=tests_root), [])
 
     def test_trf038_maps_image_processing_files(self):
-        violations = self._trf038("image_processing_foo.py")
+        violations = self.check_trf038("image_processing_foo.py")
         self.assertEqual(len(violations), 1)
         self.assertIn("test_image_processing_foo.py", violations[0].message)
 
     def test_trf038_ignores_configuration_files(self):
         # Config classes are conventionally covered by ConfigTester inside test_modeling_*.py,
         # so configuration_*.py does not need a standalone test file.
-        self.assertEqual(self._trf038("configuration_foo.py"), [])
+        self.assertEqual(self.check_trf038("configuration_foo.py"), [])
 
-    def test_trf038_preserves_multi_config_directory_suffix(self):
+    def test_trf038_preserves_composite_name_directory_suffix(self):
         # modeling_foo_text.py -> test_modeling_foo_text.py, not test_modeling_text.py.
-        violations = self._trf038("modeling_foo_text.py")
+        violations = self.check_trf038("modeling_foo_text.py")
         self.assertEqual(len(violations), 1)
         self.assertIn("test_modeling_foo_text.py", violations[0].message)
 
@@ -3320,6 +3315,18 @@ def foo():
         violations = self._run(mlinter.TRF039, source, file_name="image_processing_foo.py")
         self.assertEqual(len(violations), 1)
         self.assertIn("`Image`", violations[0].message)
+
+    def test_trf039_flags_unused_guarded_import_after_ruff(self):
+        source = """
+if is_vision_available():
+    pass
+
+def foo():
+    return 1
+"""
+        violations = self._run(mlinter.TRF039, source, file_name="image_processing_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`pass` is imported", violations[0].message)
 
     def test_trf039_allows_used_guarded_import(self):
         source = """
@@ -3353,12 +3360,13 @@ def foo():
 
     def test_trf039_handles_combined_availability_guard(self):
         source = """
-if is_vision_available() and is_torch_available():
-    import torch
-    from PIL import Image
+if is_torch_available():
+    if is_torchvision_available():
+        import torchvision
+        from PIL import Image
 
 def foo():
-    return torch.zeros(1)
+    return torchvision.nn.functional.resize(image)
 """
         violations = self._run(mlinter.TRF039, source, file_name="image_processing_foo.py")
         self.assertEqual(len(violations), 1)

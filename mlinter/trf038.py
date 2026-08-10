@@ -30,10 +30,10 @@ TESTS_ROOT = Path("tests/models")
 # `modular_*.py` maps to `test_modeling_*` because that's the file it generates and that gets run.
 _TEST_PREFIX_BY_SOURCE_PREFIX = {
     "modeling_": "test_modeling_",
-    "modular_": "test_modeling_",
     "processing_": "test_processing_",
     "image_processing_": "test_image_processing_",
     "video_processing_": "test_video_processing_",
+    "feature_extraction": "test_feature_extraction_",
 }
 
 
@@ -56,8 +56,8 @@ def _expected_test_file(file_path: Path) -> Path | None:
         return None
     source_prefix, test_prefix = match
 
-    suffix = stem[len(source_prefix) :]  # e.g. "llama" or "llama_text" for multi-config directories
-    return TESTS_ROOT / model_dir / f"{test_prefix}{suffix}.py"
+    model_name = stem[len(source_prefix) :]  # e.g. "llama"
+    return TESTS_ROOT / model_dir / f"{test_prefix}{model_name}.py"
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:

@@ -65,6 +65,8 @@ def _guarded_imports(tree: ast.Module) -> list[tuple[str, ast.stmt, ast.alias]]:
         for stmt in node.body:
             if isinstance(stmt, (ast.Import, ast.ImportFrom)):
                 found.extend((name, stmt, alias) for name, alias in _imported_bindings(stmt))
+            elif isinstance(stmt, ast.Pass):
+                found.append(("pass", stmt, None))
     return found
 
 
@@ -88,12 +90,16 @@ def _is_referenced_elsewhere(tree: ast.Module, name: str, import_stmt: ast.stmt)
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     violations: list[Violation] = []
     for name, stmt, alias in _guarded_imports(tree):
-        if _is_referenced_elsewhere(tree, name, stmt):
-            continue
+        if name == "pass":
+            # dummy pass statement so we know it is not used anywhere in code
+            line_number = stmt.lineno
+        else:
+            if _is_referenced_elsewhere(tree, name, stmt):
+                continue
 
-        line_number = getattr(alias, "lineno", stmt.lineno)
-        if _has_rule_suppression(source_lines, RULE_ID, line_number):
-            continue
+            line_number = getattr(alias, "lineno", stmt.lineno)
+            if _has_rule_suppression(source_lines, RULE_ID, line_number):
+                continue
 
         violations.append(
             Violation(

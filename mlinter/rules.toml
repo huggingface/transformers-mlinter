@@ -662,7 +662,7 @@ diff = '''
 [rules.TRF038]
 description = "Every modeling-family source file needs a matching test file under tests/models/."
 default_enabled = true
-allowlist_models = []
+allowlist_models = ["bros", "cohere_asr", "emu3", "gemma4", "higgs_audio_v2", "kyutai_speech_to_text", "minimax_m3_vl", "nemotron_asr_streaming", "nougat", "pe_audio", "pe_video", "pe_audio_video","sam2_video", "sam3_video", "siglip", "siglip2", "tvp", "video_llava", "vilt", "vjepa2", "voxtral", "x_clip"]
 
 [rules.TRF038.explanation]
 what_it_does = "For each modeling_*.py, processing_*.py, image_processing_*.py and video_processing_*.py file, checks that a corresponding tests/models/<model>/test_*.py file exists (e.g. modeling_acme.py -> tests/models/acme/test_modeling_acme.py). configuration_*.py is exempt since config classes are conventionally covered by ConfigTester inside the companion test_modeling_*.py file. There is no `# trf-ignore: TRF038` support for this rule: use `allowlist_models` if a model genuinely cannot ship a test yet, so the exemption is visible in review."

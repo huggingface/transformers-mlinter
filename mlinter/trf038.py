@@ -24,16 +24,15 @@ RULE_ID = ""  # Set by discovery
 
 TESTS_ROOT = Path("tests/models")
 
-# Maps a source-file prefix to the prefix its test file is expected to use. `configuration_*.py`
-# is intentionally absent: config classes are conventionally exercised through `ConfigTester`
-# inside the companion `test_modeling_*.py` file rather than through a standalone test file, and
-# `modular_*.py` maps to `test_modeling_*` because that's the file it generates and that gets run.
+# Maps a source-file prefix to the prefix its test file is expected to use
 _TEST_PREFIX_BY_SOURCE_PREFIX = {
     "modeling_": "test_modeling_",
     "processing_": "test_processing_",
+    # order matters, PIL should match first if exists so we don't look for `test_image_processing_pil_{ModelName}.py`
+    "image_processing_pil_": "test_image_processing_",
     "image_processing_": "test_image_processing_",
     "video_processing_": "test_video_processing_",
-    "feature_extraction": "test_feature_extraction_",
+    "feature_extraction_": "test_feature_extraction_",
 }
 
 

@@ -684,3 +684,20 @@ diff = '''
  if is_vision_available():
 -    from PIL import Image
 '''
+
+[rules.TRF040]
+description = "@can_return_tuple must not be combined with @capture_outputs."
+default_enabled = true
+allowlist_models = []
+
+[rules.TRF040.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, checks methods decorated with both @capture_outputs and @can_return_tuple. Complements TRF003, which covers manual return_dict branching in forward()."
+why_bad = "@capture_outputs and @can_return_tuple both pop return_dict, thus only the outermost decorator sees the true value. @capture_outputs already handles to_tuple conversion which makes @can_return_tuple redundant."
+diff = '''
+-@can_return_tuple
+ @merge_with_config_defaults
+ @capture_outputs
+ @auto_docstring
+ def forward(self, x):
+     return AcmeModelOutput(last_hidden_state=x)
+'''

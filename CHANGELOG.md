@@ -22,6 +22,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `if is_vision_available(): from PIL import Image`) that are never referenced anywhere else in the file. `ruff`
   does not clean these up on its own, so a leftover import from a refactor silently lingers in `src/transformers`.
   Suppress with `# trf-ignore: TRF039` for genuine false positives (e.g. names only used dynamically).
+- Added `TRF040`, which flags methods in `modeling_*.py` / `modular_*.py` decorated with both `@capture_outputs` and
+  `@can_return_tuple`. Both decorators pop `return_dict`, so only the outermost one sees the value the caller actually
+  passed while the inner one silently falls back to `self.config.return_dict`. `@capture_outputs` already handles the
+  `to_tuple` conversion, which makes `@can_return_tuple` redundant. Complements `TRF003`, which covers manual `return_dict`
+  branching. Suppress with `# trf-ignore: TRF040`.
 - Added `TRF020`, which enforces that Multi-head Latent Attention (MLA) models — those whose configuration declares
   `kv_lora_rank` — isolate the KV LoRA expansion (conventionally `kv_b_proj`, or any `nn.Linear(config.kv_lora_rank, ...)`)
   in a dedicated method (e.g. `expand_kv`) that `forward()` calls, rather than applying it inline inside `forward()`.

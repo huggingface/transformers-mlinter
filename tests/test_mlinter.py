@@ -3260,9 +3260,9 @@ class FooAttention(nn.Module):
 
     # --- TRF038: every modeling-family file needs a matching test file ---
 
-    def check_trf038(self, file_name: str, tests_root: Path | None = None):
+    def check_trf038(self, file_name: str, tests_root: Path | None = None, source: str | None = None):
         file_path = Path("src/transformers/models/foo") / file_name
-        source = "class FooModel: ...\n"
+        source = "class FooModel: ...\n" if source is None else source
         with patch.object(_trf038_mod, "TESTS_ROOT", tests_root or Path("/nonexistent/tests/models")):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF038})
         return [v for v in violations if v.rule_id == mlinter.TRF038]
@@ -3382,7 +3382,7 @@ def foo():
 """
         violations = self._run(mlinter.TRF039, source, file_name="image_processing_foo.py")
         self.assertEqual(len(violations), 1)
-        self.assertIn("`pass` is imported", violations[0].message)
+        self.assertIn("Availability guard has an empty body", violations[0].message)
 
     def test_trf039_allows_used_guarded_import(self):
         source = """

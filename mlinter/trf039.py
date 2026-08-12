@@ -103,11 +103,9 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                 continue
 
             message = (
-                (
-                    f"{RULE_ID}: `{name}` is imported behind an availability guard but is never used in "
-                    f"this file. ruff does not flag or clean up imports inside `if is_*_available():` "
-                    "blocks, so a leftover import from a refactor stays behind silently. Remove it."
-                ),
+                f"{RULE_ID}: `{name}` is imported behind an availability guard but is never used in "
+                f"this file. ruff does not flag or clean up imports inside `if is_*_available():` "
+                "blocks, so a leftover import from a refactor stays behind silently. Remove it."
             )
 
         violations.append(

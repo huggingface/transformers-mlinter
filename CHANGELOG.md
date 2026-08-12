@@ -58,6 +58,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   either root, and `--changed-only` accepts those paths. This changes which files the linter walks for *every* rule, so
   it is worth noting even though no existing rule is affected: they all gate on the file-name prefix, and a full scan
   confirms none of `TRF001`-`TRF041` fires on a test file. File count on a current checkout goes from 1 132 to 1 222.
+- Added `TRF055`, which flags `config = SomeConfig` on `PreTrainedModel` subclasses in `modeling_*.py` and
+  `modular_*.py`; the correct form is the annotation `config: SomeConfig`. `PreTrainedModel.__init_subclass__`
+  derives `config_class` from a `config` **annotation** via `inspect.get_annotations(cls)`, so an assignment is
+  invisible to it: the class gets a stray attribute while `config_class` silently keeps the parent's, which is how
+  `Gemma4VisionModel.config_class` resolved to `Gemma4Config` instead of `Gemma4VisionConfig`. A pure annotation has
+  no runtime value, so it sets `config_class` correctly. Suppress with `# trf-ignore: TRF055`.
 - Added `TRF043`–`TRF054`, twelve rules mined from the transformers deep-review dimension registry (recurring
   maintainer review comments across ~300 PRs, nine reviewers). Across the twelve, a current
   transformers checkout reports three violations after allowlisting the legacy tail — `TRF043` on

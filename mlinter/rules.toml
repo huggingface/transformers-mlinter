@@ -961,3 +961,18 @@ diff = '''
 +    def image_token_id(self):
 +        return self.tokenizer.convert_tokens_to_ids(self.image_token)
 '''
+
+[rules.TRF055]
+description = "`config` on a PreTrainedModel subclass must be an annotation (`config: SomeConfig`), not an assignment (`config = SomeConfig`)."
+default_enabled = true
+allowlist_models = []
+
+[rules.TRF055.explanation]
+what_it_does = "Checks that PreTrainedModel subclasses in modeling_*.py and modular_*.py do not assign `config = SomeConfig` as a class attribute."
+why_bad = "`PreTrainedModel.__init_subclass__` derives `config_class` by looking for a `config` **annotation** via `inspect.get_annotations(cls)`. An assignment (`config = SomeConfig`) is invisible to this mechanism: it creates a stray class attribute but `inspect.get_annotations` returns `None` for it, so the subclass falls back to inheriting the parent's `config_class` instead of picking up the intended config. A pure annotation (`config: SomeConfig`) has no runtime value and does not create an attribute, so it is correctly detected by `inspect.get_annotations` and sets `config_class` to the right class."
+diff = '''
+ class Gemma4VisionModel(Gemma4PreTrainedModel):
+     """The Gemma 4 Vision Encoder."""
+-    config = Gemma4VisionConfig
++    config: Gemma4VisionConfig
+'''

@@ -11,3 +11,6 @@ venv/
 .tox/
 .pytest_cache/
 .ruff_cache/
+
+# Stray tool/MCP server logs
+*.log

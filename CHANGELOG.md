@@ -27,6 +27,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   passed while the inner one silently falls back to `self.config.return_dict`. `@capture_outputs` already handles the
   `to_tuple` conversion, which makes `@can_return_tuple` redundant. Complements `TRF003`, which covers manual `return_dict`
   branching. Suppress with `# trf-ignore: TRF040`.
+- Added `TRF041`, which requires a `# CODEPATH:` comment on every `if`/`elif` statement and conditional
+  expression in `modeling_*.py`/`modular_*.py` whose condition reads a `config.*` or `self.config.*` attribute.
+  The comment is accepted on the branch line or anywhere in the contiguous comment block above it, so it can head a
+  multi-line explanation. Modelled on Rust's `// SAFETY:` convention: the branch stays legal, but the author has to
+  write down which checkpoints take which path. Deliberately broad — a branch on a numeric or optional config field
+  forks the graph exactly as much as one on a boolean flag, and the library has 1 838 such branches across 330 models
+  today. `cutoff_date` grandfathers all of them; the eleven post-cutoff models are allowlisted in the TOML.
+  Default coalescing is exempt by shape, not by name: `X if X is not None else fallback`, where the tested field is
+  itself one of the results, is `getattr(config, x, default)` spelled long and cannot fork the graph, so it needs no
+  note (79 of the 2 674 firings in the library today). Mentioning None is not enough to qualify —
+  `config.vision_config is not None` gates a whole extra tower and still has to explain itself.
+  Fields that gate no checkpoint divergence — `problem_type` picking a loss, `hidden_act` picking an activation —
+  can be exempted for a whole file with a module-level `# trf-ignore: TRF041 config.problem_type, config.hidden_act`
+  directive, instead of repeating a per-branch suppression. `self.config.x`, `config.x` and `x` all name the same
+  field, and the directive has to name at least one, so a bare `# trf-ignore: TRF041` still means only its own line.
+  Exemption is per field: a branch reading several config fields is skipped only when every one of them is exempt.
 - Added `TRF020`, which enforces that Multi-head Latent Attention (MLA) models — those whose configuration declares
   `kv_lora_rank` — isolate the KV LoRA expansion (conventionally `kv_b_proj`, or any `nn.Linear(config.kv_lora_rank, ...)`)
   in a dedicated method (e.g. `expand_kv`) that `forward()` calls, rather than applying it inline inside `forward()`.

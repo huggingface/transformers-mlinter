@@ -9,6 +9,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Added `TRF038`, which checks that every `modeling_*.py`, `processing_*.py`, `image_processing_*.py`,
+  `video_processing_*.py` and `feature_extraction_*.py` file has a matching `tests/models/<model>/test_*.py` file
+  (e.g. `modeling_acme.py` -> `tests/models/acme/test_modeling_acme.py`). `configuration_*.py` is exempt, since
+  config classes are conventionally exercised through `ConfigTester` inside `test_modeling_*.py`.
+  `modular_*.py` files are handled by inspecting the classes they define rather than the filename, since one
+  modular file can mix modeling, processing, image/video-processor and config classes. This rule has
+  no `# trf-ignore: TRF038` suppression: every model can ship at least a minimal test built on a dummy config and
+  randomly initialized weights, so exemptions must go through `allowlist_models` instead, where they are visible in
+  review.
+- Added `TRF039`, which flags imports inside `if is_*_available(): ...` guards (e.g.
+  `if is_vision_available(): from PIL import Image`) that are never referenced anywhere else in the file. `ruff`
+  does not clean these up on its own, so a leftover import from a refactor silently lingers in `src/transformers`.
+  Suppress with `# trf-ignore: TRF039` for genuine false positives (e.g. names only used dynamically).
 - Added `TRF020`, which enforces that Multi-head Latent Attention (MLA) models — those whose configuration declares
   `kv_lora_rank` — isolate the KV LoRA expansion (conventionally `kv_b_proj`, or any `nn.Linear(config.kv_lora_rank, ...)`)
   in a dedicated method (e.g. `expand_kv`) that `forward()` calls, rather than applying it inline inside `forward()`.

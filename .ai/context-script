@@ -21,7 +21,9 @@ For transformers-mlinter we use this to:
    workflow plus the public surface of `mlinter/_helpers.py` so the
    reviewer knows the rule contract and available helpers.
 3. Surface TRF rule numbering state (next free ID, last few used
-   IDs) so the reviewer can sanity-check new rule numbers.
+   IDs, the IDs this PR adds) so the reviewer can sanity-check new
+   rule numbers. The baseline comes from the trunk, not the checkout,
+   which already contains the rule under review.
 4. Detect stale `RULE_ID` constants and missing license headers in
    newly added rule modules and call them out explicitly.
 5. Cross-check `mlinter/rules.toml` and `mlinter/trf*.py` for
@@ -35,6 +37,7 @@ import ast
 import json
 import os
 import re
+import subprocess
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +51,14 @@ CLAUDE_MD = os.path.join(REPO_ROOT, "CLAUDE.md")
 
 EXCERPT_CHARS = 4000
 TOTAL_BUDGET = 7000  # leaves room inside ai-reviewer's ~8 KB cap
+
+# ai-reviewer fetches the base branch into this local ref before overlaying
+# upstream `.ai/` (fail-closed: no fetch, no `.ai/`, so if this script runs at
+# all the ref was fetched). It is reachable only when `.git` lives inside the
+# checkout — the helper sandbox binds nothing else, so a linked worktree whose
+# `.git` file points at a shared bare repo falls through to the local listing.
+BASE_REF = "_reviewbot_base"
+GIT_TIMEOUT = 10  # seconds; a slow git must not stall the review
 
 TRF_MODULE_RE = re.compile(r"^mlinter/trf(\d{3})\.py$")
 TRF_TOML_SECTION_RE = re.compile(r"^\[rules\.TRF(\d{3})\]\s*$", re.MULTILINE)
@@ -170,6 +181,102 @@ def rule_module_lints(paths: set[str]) -> list[str]:
     return findings
 
 
+def _git_rule_numbers(ref: str) -> list[int] | None:
+    """Rule ids present on `ref`, or None when git or the ref is unavailable."""
+    try:
+        completed = subprocess.run(
+            ["git", "-C", REPO_ROOT, "ls-tree", "--name-only", ref, "mlinter/"],
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    nums = sorted(
+        int(m.group(1))
+        for m in re.finditer(r"^mlinter/trf(\d{3})\.py$", completed.stdout, re.MULTILINE)
+    )
+    return nums or None
+
+
+def added_rule_numbers(files: list) -> set[int]:
+    """Rule ids this PR introduces, so they are never counted as pre-existing.
+
+    ai-reviewer may or may not carry a per-file status; when it does, a modified
+    module is excluded, since modifying `trf019.py` does not claim id 19.
+    """
+    nums: set[int] = set()
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        m = TRF_MODULE_RE.match(entry.get("path") or "")
+        if not m:
+            continue
+        status = (entry.get("status") or "").lower()
+        if status and status not in {"added", "copied", "renamed"}:
+            continue
+        nums.add(int(m.group(1)))
+    return nums
+
+
+def baseline_rule_numbers(files: list) -> tuple[list[int], str]:
+    """Rule ids that exist *before* this PR, plus a label naming where they came from.
+
+    The checkout under review already contains the rule the PR adds, so listing
+    `mlinter/` and calling the result "main" reports the PR's own id as taken and
+    pushes every new rule one number too high. Read the baseline from the trunk
+    instead, and only fall back to the working tree — minus the modules this PR
+    adds — when git cannot answer.
+    """
+    for ref in (BASE_REF, "origin/main", "main"):
+        nums = _git_rule_numbers(ref)
+        if nums:
+            return nums, "the base branch"
+
+    added = added_rule_numbers(files)
+    return [n for n in existing_rule_numbers() if n not in added], (
+        "the checkout minus the modules this PR adds"
+    )
+
+
+def numbering_section(files: list) -> str:
+    """The rule-numbering block injected into the reviewer prompt."""
+    baseline, source = baseline_rule_numbers(files)
+    added = sorted(added_rule_numbers(files))
+    next_id = (max(baseline) + 1) if baseline else 1
+    recent = ", ".join(f"TRF{n:03d}" for n in baseline[-5:]) if baseline else "none"
+
+    lines = [
+        "Rule numbering state:",
+        f"- Existing rule modules on {source}, i.e. excluding this PR: "
+        f"{len(baseline)} (most recent: {recent}).",
+        f"- Next free rule ID: **TRF{next_id:03d}**.",
+    ]
+    if added:
+        ids = ", ".join(f"TRF{n:03d}" for n in added)
+        lines.append(f"- Rule IDs this PR adds: {ids}.")
+        collisions = [n for n in added if n in set(baseline)]
+        if collisions:
+            clash = ", ".join(f"TRF{n:03d}" for n in collisions)
+            lines.append(
+                f"- **ID collision**: {clash} already exist on {source}. "
+                f"Ask for the new rules to move to the next free IDs."
+            )
+        else:
+            lines.append(
+                "- These do not collide with existing IDs. Do not ask for a "
+                "renumbering on the basis of this list alone."
+            )
+    lines.append(
+        "- New rules must use the next free ID, three-digit zero-padded. "
+        "Skipping numbers or reusing a retired ID needs justification."
+    )
+    return "\n".join(lines)
+
+
 def toml_module_sync(paths: set[str]) -> list[str]:
     """If the diff touches rules.toml or any rule module, cross-check that
     every TOML section has a matching module and vice versa."""
@@ -221,17 +328,7 @@ def main() -> int:
     touches_rules_toml = "mlinter/rules.toml" in paths
 
     if touches_rule_module or touches_rules_toml:
-        nums = existing_rule_numbers()
-        next_id = (max(nums) + 1) if nums else 1
-        recent = ", ".join(f"TRF{n:03d}" for n in nums[-5:]) if nums else "none"
-        sections.append(
-            f"Rule numbering state:\n"
-            f"- Existing rule modules in `main`: {len(nums)} "
-            f"(most recent: {recent}).\n"
-            f"- Next free rule ID: **TRF{next_id:03d}**.\n"
-            f"- New rules must use the next free ID, three-digit zero-padded. "
-            f"Skipping numbers or reusing a retired ID needs justification."
-        )
+        sections.append(numbering_section(files))
 
         skill = read_file(SKILL_PATH, limit=EXCERPT_CHARS)
         if skill:

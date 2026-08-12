@@ -257,7 +257,15 @@ def _is_modeling_candidate(path: Path) -> bool:
     return (
         path.suffix == ".py"
         and path.name.startswith(
-            ("modeling_", "modular_", "configuration_", "image_processing_", "video_processing_", "processing_")
+            (
+                "modeling_",
+                "modular_",
+                "configuration_",
+                "image_processing_",
+                "video_processing_",
+                "processing_",
+                "feature_extraction_",
+            )
         )
         and MODELS_ROOT in path.parents
     )

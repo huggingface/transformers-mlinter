@@ -46,6 +46,7 @@ MODELING_PATTERNS = (
     "image_processing_*.py",
     "video_processing_*.py",
     "processing_*.py",
+    "feature_extraction_*.py",
 )
 DEFAULT_RULE_SPECS_PATH = Path(__file__).with_name("rules.toml")
 RULE_SPECS_VERSION = 1

@@ -3302,6 +3302,62 @@ class FooAttention(nn.Module):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF038})
         self.assertEqual(len([v for v in violations if v.rule_id == mlinter.TRF038]), 1)
 
+    def test_trf038_modular_infers_single_category_from_class_names(self):
+        source = """
+class FooConfig(PretrainedConfig):
+    pass
+
+class FooModel(FooPreTrainedModel):
+    pass
+
+class FooForCausalLM(FooPreTrainedModel):
+    pass
+"""
+        violations = self.check_trf038("modular_foo.py", source=source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("test_modeling_foo.py", violations[0].message)
+
+    def test_trf038_modular_infers_multiple_categories_from_class_names(self):
+        source = """
+class FooConfig(PretrainedConfig):
+    pass
+
+class FooModel(FooPreTrainedModel):
+    pass
+
+class FooImageProcessorFast(BaseImageProcessorFast):
+    pass
+
+class FooProcessor(ProcessorMixin):
+    pass
+"""
+        violations = self.check_trf038("modular_foo.py", source=source)
+        messages = {v.message for v in violations}
+        self.assertEqual(len(violations), 3)
+        self.assertTrue(any("test_modeling_foo.py" in m for m in messages))
+        self.assertTrue(any("test_image_processing_foo.py" in m for m in messages))
+        self.assertTrue(any("test_processing_foo.py" in m for m in messages))
+        # ImageProcessorFast must resolve to the shared image-processing test file, not a
+        # nonexistent `test_image_processing_fast_foo.py`.
+        self.assertFalse(any("fast" in m.lower() for m in messages))
+
+    def test_trf038_modular_reports_one_violation_per_missing_category(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    pass
+
+class FooVideoProcessor(BaseVideoProcessor):
+    pass
+"""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tests_root = Path(tmp_dir) / "tests" / "models"
+            (tests_root / "foo").mkdir(parents=True)
+            (tests_root / "foo" / "test_modeling_foo.py").write_text("class FooModelTest: ...\n", encoding="utf-8")
+            violations = self.check_trf038("modular_foo.py", source=source, tests_root=tests_root)
+
+        self.assertEqual(len(violations), 1)
+        self.assertIn("test_video_processing_foo.py", violations[0].message)
+
     # --- TRF039: imports guarded by is_*_available() must actually be used ---
 
     def test_trf039_flags_unused_guarded_import(self):

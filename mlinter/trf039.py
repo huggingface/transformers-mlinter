@@ -93,6 +93,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         if name == "pass":
             # dummy pass statement so we know it is not used anywhere in code
             line_number = stmt.lineno
+            message = f"{RULE_ID}: Availability guard has an empty body — ruff removed the import it protected, remove the guard too."
         else:
             if _is_referenced_elsewhere(tree, name, stmt):
                 continue
@@ -101,15 +102,19 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
             if _has_rule_suppression(source_lines, RULE_ID, line_number):
                 continue
 
-        violations.append(
-            Violation(
-                file_path=file_path,
-                line_number=line_number,
-                message=(
+            message = (
+                (
                     f"{RULE_ID}: `{name}` is imported behind an availability guard but is never used in "
                     f"this file. ruff does not flag or clean up imports inside `if is_*_available():` "
                     "blocks, so a leftover import from a refactor stays behind silently. Remove it."
                 ),
+            )
+
+        violations.append(
+            Violation(
+                file_path=file_path,
+                line_number=line_number,
+                message=message,
             )
         )
     return violations

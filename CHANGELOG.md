@@ -116,6 +116,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added `TRF037`, which flags `einsum` in modeling files and reports the equation when it is a literal.
   **Disabled by default** — einsum is occasionally the clearest way to write a contraction, so this is opt-in via
   `--enable-rules TRF037` rather than a hard convention. `x_clip` is allowlisted.
+- Added `TRF040`, which flags methods in `modeling_*.py` / `modular_*.py` decorated with both `@capture_outputs` and
+  `@can_return_tuple`. Both decorators pop `return_dict`, so only the outermost one sees the value the caller actually
+  passed while the inner one silently falls back to `self.config.return_dict`. `@capture_outputs` already handles the
+  `to_tuple` conversion, which makes `@can_return_tuple` redundant. Complements `TRF003`, which covers manual `return_dict`
+  branching. Suppress with `# trf-ignore: TRF040`.
 
 ### Fixed
 

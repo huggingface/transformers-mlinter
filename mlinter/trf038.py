@@ -18,12 +18,10 @@ import ast
 import re
 from pathlib import Path
 
-from ._helpers import Violation, _model_dir_name
+from ._helpers import TESTS_ROOT, Violation, _model_dir_name
 
 
 RULE_ID = ""  # Set by discovery
-
-TESTS_ROOT = Path("tests/models")
 
 # Maps a single-purpose source-file prefix to the prefix its test file is expected to use.
 # `configuration_*.py` is intentionally absent: config classes are tested with `ConfigTester

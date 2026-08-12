@@ -1,6 +1,6 @@
 # mlinter
 
-A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers) model integration files. It enforces structural conventions on every `modeling_*.py`, `modular_*.py`, `configuration_*.py`, `image_processing_*.py`, `video_processing_*.py`, and `processing_*.py` file under `src/transformers/models`.
+A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers) model integration files — `modeling_*.py`, `modular_*.py`, `configuration_*.py`, `processing_*.py`, `image_processing_*.py` and `video_processing_*.py` under `src/transformers/models/`, plus `test_tokenization_*.py` under `tests/models/`. It enforces structural conventions on every one of them.
 
 ## Installation
 

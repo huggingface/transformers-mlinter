@@ -22,6 +22,7 @@ from pathlib import Path
 
 
 MODELS_ROOT = Path("src/transformers/models")
+TESTS_ROOT = Path("tests/models")
 DOCS_ROOT = Path("docs/source/en/model_doc")
 
 _CONTRIBUTION_DATE_RE = re.compile(
@@ -68,16 +69,20 @@ def call_leaf_name(call: ast.Call) -> str | None:
 
 
 def _model_dir_name(file_path: Path) -> str | None:
-    try:
-        relative = file_path.resolve().relative_to(MODELS_ROOT.resolve())
-    except ValueError:
+    # A model's files live under two roots: the implementation under MODELS_ROOT and its tests under
+    # TESTS_ROOT. Both are laid out as <root>/<model>/<file>, so either resolves to the same model name.
+    for root in (MODELS_ROOT, TESTS_ROOT):
         try:
-            relative = file_path.relative_to(MODELS_ROOT)
+            relative = file_path.resolve().relative_to(root.resolve())
         except ValueError:
-            return None
-    if len(relative.parts) < 2:
-        return None
-    return relative.parts[0]
+            try:
+                relative = file_path.relative_to(root)
+            except ValueError:
+                continue
+        if len(relative.parts) < 2:
+            continue
+        return relative.parts[0]
+    return None
 
 
 def _known_model_dirs() -> set[str]:

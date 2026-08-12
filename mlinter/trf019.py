@@ -15,16 +15,13 @@
 """TRF019: `ProcessorKwargs` must not define non-empty `_defaults`; move them in `processor_config.json` in the hub."""
 
 import ast
-from datetime import date
 from pathlib import Path
 
-from ._helpers import DOCS_ROOT, Violation, _has_rule_suppression, model_contribution_date
+from ._helpers import Violation, _has_rule_suppression, is_exempt_by_cutoff
 
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
-
-__all__ = ["DOCS_ROOT", "check", "model_contribution_date"]
 
 
 def _is_processing_file(file_path: Path) -> bool:
@@ -51,11 +48,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     if not _is_processing_file(file_path):
         return []
 
-    if CUTOFF_DATE:
-        cutoff = date.fromisoformat(CUTOFF_DATE)
-        contribution_date = model_contribution_date(file_path)
-        if contribution_date is not None and contribution_date < cutoff:
-            return []
+    if is_exempt_by_cutoff(file_path, CUTOFF_DATE):
+        return []
 
     violations: list[Violation] = []
     for node in ast.walk(tree):

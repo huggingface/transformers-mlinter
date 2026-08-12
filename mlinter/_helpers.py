@@ -207,6 +207,34 @@ def _class_methods(class_node: ast.ClassDef) -> dict[str, ast.FunctionDef]:
     return {item.name: item for item in class_node.body if isinstance(item, ast.FunctionDef)}
 
 
+def _top_level_classes(tree: ast.Module) -> list[ast.ClassDef]:
+    return [node for node in tree.body if isinstance(node, ast.ClassDef)]
+
+
+def _module_and_method_functions(tree: ast.Module):
+    """Yield module-level functions and methods of top-level classes, without walking full bodies."""
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            yield node
+        elif isinstance(node, ast.ClassDef):
+            yield from (item for item in node.body if isinstance(item, ast.FunctionDef))
+
+
+def _self_attribute_targets(node: ast.AST) -> list[ast.Attribute]:
+    """Return the `self.<attr>` targets an assignment statement writes to."""
+    if isinstance(node, ast.Assign):
+        targets = node.targets
+    elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+        targets = [node.target]
+    else:
+        return []
+    return [
+        target
+        for target in targets
+        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self"
+    ]
+
+
 def _function_argument_names(function_node: ast.FunctionDef) -> set[str]:
     names = {arg.arg for arg in function_node.args.args}
     names.update(arg.arg for arg in function_node.args.kwonlyargs)

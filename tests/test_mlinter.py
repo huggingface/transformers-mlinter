@@ -1784,7 +1784,7 @@ class FooProcessorKwargs(ProcessingKwargs, total=False):
     images_kwargs: FooImageProcessorKwargs
 """
         file_path = Path("src/transformers/models/foo/processing_foo.py")
-        with patch.object(_trf019_mod, "model_contribution_date", return_value=None):
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
         self.assertEqual(len(trf019), 1)
@@ -1860,14 +1860,12 @@ class FooVisionProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {"images_kwargs": {"do_resize": True}}
 """
         file_path = Path("src/transformers/models/foo/processing_foo.py")
-        with patch.object(_trf019_mod, "model_contribution_date", return_value=None):
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
         self.assertEqual(len(trf019), 2)
 
     def test_trf019_cutoff_exempts_file_committed_before_cutoff(self):
-        from datetime import date
-
         source = """
 class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {"text_kwargs": {"padding": False}}
@@ -1875,15 +1873,13 @@ class FooProcessorKwargs(ProcessingKwargs, total=False):
         file_path = Path("src/transformers/models/foo/processing_foo.py")
         with (
             patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-10"),
-            patch.object(_trf019_mod, "model_contribution_date", return_value=date(2025, 1, 1)),
+            patch.object(_helpers_mod, "model_contribution_date", return_value=date(2025, 1, 1)),
         ):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
         self.assertEqual(len(trf019), 0)
 
     def test_trf019_cutoff_flags_file_committed_on_or_after_cutoff(self):
-        from datetime import date
-
         source = """
 class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {"text_kwargs": {"padding": False}}
@@ -1891,7 +1887,7 @@ class FooProcessorKwargs(ProcessingKwargs, total=False):
         file_path = Path("src/transformers/models/foo/processing_foo.py")
         with (
             patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-09"),
-            patch.object(_trf019_mod, "model_contribution_date", return_value=date(2026, 6, 10)),
+            patch.object(_helpers_mod, "model_contribution_date", return_value=date(2026, 6, 10)),
         ):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
@@ -1905,7 +1901,7 @@ class FooProcessorKwargs(ProcessingKwargs, total=False):
         file_path = Path("src/transformers/models/foo/processing_foo.py")
         with (
             patch.object(_trf019_mod, "CUTOFF_DATE", "2026-06-10"),
-            patch.object(_trf019_mod, "model_contribution_date", return_value=None),
+            patch.object(_helpers_mod, "model_contribution_date", return_value=None),
         ):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
         trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
@@ -3898,6 +3894,501 @@ class FooTokenizationTest(BertTokenizationTest, unittest.TestCase):
         self.assertTrue(mlinter._is_modeling_candidate(Path("tests/models/foo/test_tokenization_foo.py")))
         self.assertTrue(mlinter._is_modeling_candidate(Path("src/transformers/models/foo/modeling_foo.py")))
         self.assertFalse(mlinter._is_modeling_candidate(Path("tests/models/foo/test_modeling_foo.py")))
+
+    # --- TRF043: Attention classes must not declare position_ids in forward ---
+
+    def test_trf038_flags_position_ids_in_attention_forward(self):
+        source = """
+class FooAttention(nn.Module):
+    def forward(self, hidden_states, position_embeddings, attention_mask=None, position_ids=None, **kwargs):
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF043})
+        trf043 = [v for v in violations if v.rule_id == mlinter.TRF043]
+        self.assertEqual(len(trf043), 1)
+        self.assertIn("FooAttention.forward declares position_ids", trf043[0].message)
+
+    def test_trf038_allows_kwargs_only_attention(self):
+        source = """
+class FooAttention(nn.Module):
+    def forward(self, hidden_states, position_embeddings=None, attention_mask=None, **kwargs):
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF043})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF043], [])
+
+    def test_trf038_ignores_non_attention_classes(self):
+        source = """
+class FooDecoderLayer(GradientCheckpointingLayer):
+    def forward(self, hidden_states, position_ids=None, **kwargs):
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF043})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF043], [])
+
+    def test_trf038_respects_suppression_comment(self):
+        source = """
+class FooAttention(nn.Module):
+    # trf-ignore: TRF043
+    def forward(self, hidden_states, position_ids=None, **kwargs):
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF043})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF043], [])
+
+    # --- TRF044: cache_position must not reappear in modeling signatures ---
+
+    def test_trf039_flags_cache_position_parameter(self):
+        source = """
+class FooAttention(nn.Module):
+    def forward(self, hidden_states, past_key_values=None, cache_position=None, **kwargs):
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF044})
+        trf044 = [v for v in violations if v.rule_id == mlinter.TRF044]
+        self.assertEqual(len(trf044), 1)
+        self.assertIn("cache_position", trf044[0].message)
+
+    def test_trf039_flags_helper_functions_too(self):
+        source = """
+def create_causal_mask(attention_mask, cache_position):
+    return attention_mask
+"""
+        file_path = Path("src/transformers/models/foo/modular_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF044})
+        self.assertEqual(len([v for v in violations if v.rule_id == mlinter.TRF044]), 1)
+
+    def test_trf039_no_violation_without_cache_position(self):
+        source = """
+class FooAttention(nn.Module):
+    def forward(self, hidden_states, past_key_values=None, **kwargs):
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF044})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF044], [])
+
+    # --- TRF045: forward must not declare legacy output_*/return_dict parameters ---
+
+    def test_trf040_flags_legacy_output_parameters(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, input_ids, output_attentions=None, output_hidden_states=None, return_dict=None):
+        return input_ids
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF045})
+        trf045 = [v for v in violations if v.rule_id == mlinter.TRF045]
+        self.assertEqual(len(trf045), 1)
+        self.assertIn("output_attentions, output_hidden_states, return_dict", trf045[0].message)
+
+    def test_trf040_no_violation_with_kwargs_signature(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, input_ids, **kwargs):
+        return input_ids
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF045})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF045], [])
+
+    def test_trf040_cutoff_exempts_old_model(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, input_ids, return_dict=None):
+        return input_ids
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2020, 1, 1)):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF045})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF045], [])
+
+    def test_trf040_ignores_non_forward_methods(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_encoder_outputs(self, input_ids, return_dict=None):
+        return input_ids
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF045})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF045], [])
+
+    # --- TRF046: forward must not write module attributes ---
+
+    def test_trf041_flags_self_assignment_in_forward(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, hidden_states):
+        self.sequence_length = hidden_states.shape[1]
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF046})
+        trf046 = [v for v in violations if v.rule_id == mlinter.TRF046]
+        self.assertEqual(len(trf046), 1)
+        self.assertIn("FooModel.forward writes self.sequence_length", trf046[0].message)
+
+    def test_trf041_flags_augmented_assignment(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, hidden_states):
+        self.call_count += 1
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF046})
+        self.assertEqual(len([v for v in violations if v.rule_id == mlinter.TRF046]), 1)
+
+    def test_trf041_allows_locals_and_init_assignments(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.hidden_size = config.hidden_size
+
+    def forward(self, hidden_states):
+        sequence_length = hidden_states.shape[1]
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF046})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF046], [])
+
+    def test_trf041_respects_suppression_comment(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, hidden_states):
+        # trf-ignore: TRF046
+        self.cached_states = hidden_states
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF046})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF046], [])
+
+    # --- TRF047: image/video processors are stateless ---
+
+    def test_trf042_flags_self_assignment_in_preprocess(self):
+        source = """
+class FooImageProcessor(BaseImageProcessor):
+    def _preprocess(self, images, **kwargs):
+        self.original_sizes = [image.shape for image in images]
+        return images
+"""
+        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF047})
+        trf047 = [v for v in violations if v.rule_id == mlinter.TRF047]
+        self.assertEqual(len(trf047), 1)
+        self.assertIn("FooImageProcessor._preprocess writes self.original_sizes", trf047[0].message)
+
+    def test_trf042_flags_post_process_methods(self):
+        source = """
+class FooVideoProcessor(BaseVideoProcessor):
+    def post_process_detection(self, outputs):
+        self.pred = outputs
+        return outputs
+"""
+        file_path = Path("src/transformers/models/foo/video_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF047})
+        self.assertEqual(len([v for v in violations if v.rule_id == mlinter.TRF047]), 1)
+
+    def test_trf042_allows_init_assignments(self):
+        source = """
+class FooImageProcessor(BaseImageProcessor):
+    def __init__(self, do_resize=True, **kwargs):
+        super().__init__(**kwargs)
+        self.do_resize = do_resize
+
+    def _preprocess(self, images, **kwargs):
+        original_sizes = [image.shape for image in images]
+        return images
+"""
+        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF047})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF047], [])
+
+    def test_trf042_ignores_modeling_files(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def preprocess(self, images):
+        self.original_sizes = images
+        return images
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF047})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF047], [])
+
+    # --- TRF048: _tied_weights_keys must be a dict ---
+
+    def test_trf043_flags_list_form(self):
+        source = """
+class FooForCausalLM(FooPreTrainedModel):
+    _tied_weights_keys = ["lm_head.weight"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF048})
+        trf048 = [v for v in violations if v.rule_id == mlinter.TRF048]
+        self.assertEqual(len(trf048), 1)
+        self.assertIn("dict", trf048[0].message)
+
+    def test_trf043_allows_dict_form(self):
+        source = """
+class FooForCausalLM(FooPreTrainedModel):
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF048})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF048], [])
+
+    # --- TRF049: weight initialization belongs in _init_weights, not __init__ ---
+
+    def test_trf044_flags_nn_init_in_init(self):
+        source = """
+class FooEmbeddings(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.position_embedding = nn.Parameter(torch.empty(config.num_positions, config.hidden_size))
+        nn.init.trunc_normal_(self.position_embedding, std=config.initializer_range)
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF049})
+        trf049 = [v for v in violations if v.rule_id == mlinter.TRF049]
+        self.assertEqual(len(trf049), 1)
+        self.assertIn("FooEmbeddings.__init__ initializes weight values", trf049[0].message)
+
+    def test_trf044_flags_inplace_init_on_own_parameter(self):
+        source = """
+class FooLayer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(config.hidden_size))
+        self.weight.data.normal_(mean=0.0, std=0.02)
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF049})
+        self.assertEqual(len([v for v in violations if v.rule_id == mlinter.TRF049]), 1)
+
+    def test_trf044_allows_init_weights_method(self):
+        source = """
+class FooPreTrainedModel(PreTrainedModel):
+    def _init_weights(self, module):
+        super()._init_weights(module)
+        if isinstance(module, FooEmbeddings):
+            init.trunc_normal_(module.position_embedding, std=self.config.initializer_range)
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF049})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF049], [])
+
+    def test_trf044_allows_plain_allocation(self):
+        source = """
+class FooEmbeddings(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.position_embedding = nn.Parameter(torch.empty(config.num_positions, config.hidden_size))
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF049})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF049], [])
+
+    # --- TRF050: attention classes must not instantiate their own rotary embedding ---
+
+    def test_trf045_flags_rotary_in_attention_init(self):
+        source = """
+class FooAttention(nn.Module):
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.rotary_emb = FooRotaryEmbedding(config)
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF050})
+        trf050 = [v for v in violations if v.rule_id == mlinter.TRF050]
+        self.assertEqual(len(trf050), 1)
+        self.assertIn("FooAttention.__init__ instantiates FooRotaryEmbedding", trf050[0].message)
+
+    def test_trf045_allows_rotary_on_the_model(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.rotary_emb = FooRotaryEmbedding(config)
+        self.post_init()
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF050})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF050], [])
+
+    # --- TRF051: no _attn_implementation branching in modeling code ---
+
+    def test_trf046_flags_attn_implementation_comparison(self):
+        source = """
+class FooAttention(nn.Module):
+    def forward(self, hidden_states):
+        if self.config._attn_implementation == "flash_attention_2":
+            return flash_path(hidden_states)
+        return eager_path(hidden_states)
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF051})
+        trf051 = [v for v in violations if v.rule_id == mlinter.TRF051]
+        self.assertEqual(len(trf051), 1)
+        self.assertIn("ALL_ATTENTION_FUNCTIONS.get_interface", trf051[0].message)
+
+    def test_trf046_flags_membership_test(self):
+        source = """
+def helper(config):
+    return config._attn_implementation in ("sdpa", "eager")
+"""
+        file_path = Path("src/transformers/models/foo/modular_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF051})
+        self.assertEqual(len([v for v in violations if v.rule_id == mlinter.TRF051]), 1)
+
+    def test_trf046_allows_interface_dispatch(self):
+        source = """
+class FooAttention(nn.Module):
+    def forward(self, hidden_states):
+        attention_interface = ALL_ATTENTION_FUNCTIONS.get_interface(
+            self.config._attn_implementation, eager_attention_forward
+        )
+        return attention_interface(self, hidden_states)
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF051})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF051], [])
+
+    # --- TRF052: no *_ATTENTION_CLASSES dispatch dicts ---
+
+    def test_trf047_flags_attention_classes_dict(self):
+        source = """
+FOO_ATTENTION_CLASSES = {
+    "eager": FooAttention,
+    "sdpa": FooSdpaAttention,
+}
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF052})
+        trf052 = [v for v in violations if v.rule_id == mlinter.TRF052]
+        self.assertEqual(len(trf052), 1)
+        self.assertIn("FOO_ATTENTION_CLASSES", trf052[0].message)
+
+    def test_trf047_ignores_other_module_constants(self):
+        source = """
+FOO_PRETRAINED_MODEL_ARCHIVE_LIST = ["foo-base"]
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF052})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF052], [])
+
+    # --- TRF053: no manual label shifting ---
+
+    def test_trf048_flags_manual_shift(self):
+        source = """
+class FooForCausalLM(FooPreTrainedModel):
+    def forward(self, input_ids, labels=None):
+        logits = self.lm_head(self.model(input_ids))
+        if labels is not None:
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+        return logits
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF053})
+        trf053 = [v for v in violations if v.rule_id == mlinter.TRF053]
+        self.assertEqual(len(trf053), 2)
+        self.assertIn("self.loss_function owns shifting", trf053[0].message)
+
+    def test_trf048_allows_loss_function_call(self):
+        source = """
+class FooForCausalLM(FooPreTrainedModel):
+    def forward(self, input_ids, labels=None, **kwargs):
+        logits = self.lm_head(self.model(input_ids))
+        loss = None
+        if labels is not None:
+            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+        return loss
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF053})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF053], [])
+
+    def test_trf048_allows_received_shift_labels(self):
+        source = """
+class FooForConditionalGeneration(FooPreTrainedModel):
+    def forward(self, input_ids, labels=None, **kwargs):
+        logits = self.lm_head(self.model(input_ids))
+        loss = None
+        if labels is not None:
+            shift_labels = kwargs.pop("shift_labels", labels)
+            loss = self.loss_function(
+                logits=logits, labels=labels, shift_labels=shift_labels, vocab_size=self.config.vocab_size
+            )
+        return loss
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF053})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF053], [])
+
+    # --- TRF054: processor media token ids are properties ---
+
+    def test_trf049_flags_token_id_instance_attribute(self):
+        source = """
+class FooProcessor(ProcessorMixin):
+    def __init__(self, image_processor, tokenizer):
+        super().__init__(image_processor, tokenizer)
+        self.image_token_id = tokenizer.convert_tokens_to_ids(self.image_token)
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF054})
+        trf054 = [v for v in violations if v.rule_id == mlinter.TRF054]
+        self.assertEqual(len(trf054), 1)
+        self.assertIn("FooProcessor.__init__ sets self.image_token_id", trf054[0].message)
+
+    def test_trf049_allows_property(self):
+        source = """
+class FooProcessor(ProcessorMixin):
+    def __init__(self, image_processor, tokenizer):
+        super().__init__(image_processor, tokenizer)
+
+    @property
+    def image_token_id(self):
+        return self.tokenizer.convert_tokens_to_ids(self.image_token)
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF054})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF054], [])
+
+    def test_trf049_cutoff_exempts_old_model(self):
+        source = """
+class FooProcessor(ProcessorMixin):
+    def __init__(self, image_processor, tokenizer):
+        super().__init__(image_processor, tokenizer)
+        self.image_token_id = tokenizer.convert_tokens_to_ids(self.image_token)
+"""
+        file_path = Path("src/transformers/models/foo/processing_foo.py")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2020, 1, 1)):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF054})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF054], [])
+
+    def test_trf049_ignores_non_processing_files(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.image_token_id = config.image_token_id
+"""
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF054})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF054], [])
 
 
 if __name__ == "__main__":

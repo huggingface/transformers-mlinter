@@ -58,6 +58,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   either root, and `--changed-only` accepts those paths. This changes which files the linter walks for *every* rule, so
   it is worth noting even though no existing rule is affected: they all gate on the file-name prefix, and a full scan
   confirms none of `TRF001`-`TRF041` fires on a test file. File count on a current checkout goes from 1 132 to 1 222.
+- Added `TRF043`–`TRF054`, twelve rules mined from the transformers deep-review dimension registry (recurring
+  maintainer review comments across ~300 PRs, nine reviewers). Across the twelve, a current
+  transformers checkout reports three violations after allowlisting the legacy tail — `TRF043` on
+  `cohere_compass` and `TRF054` twice on `muse_glimmer`, both models added after these rules were written.
+  `TRF045` and `TRF054` additionally use `cutoff_date = "2026-06-20"` so they guard new models without opening
+  a backlog.
+  - `TRF043`: attention classes must not declare `position_ids` in their `forward` signature — it flows through
+    `**kwargs` so padding-free flash-attention can consume it.
+  - `TRF044`: no `cache_position` parameter anywhere in modeling code; it is removed framework surface and the cache
+    update call carries no position threading.
+  - `TRF045`: `forward` must not declare `output_attentions`/`output_hidden_states`/`return_dict`; the
+    `@capture_outputs`/`@can_return_tuple` decorator stack owns them.
+  - `TRF046`: `forward` must not write `self.<attr>`; modules are stateless in forward and carried state is passed
+    explicitly.
+  - `TRF047`: image/video processor `preprocess`/`_preprocess`/`__call__`/`post_process*` must not write `self.<attr>`;
+    carried state breaks preprocess-many-then-postprocess batching.
+  - `TRF048`: `_tied_weights_keys` must be the v5 dict form mapping target to source, not a list.
+  - `TRF049`: no weight-value initialization in `__init__` (`nn.init.*`, `init.*`, or in-place ops on own parameters);
+    meta-device instantiation discards it — allocate with `torch.empty` and initialize in `_init_weights`.
+  - `TRF050`: attention classes must not instantiate their own `*RotaryEmbedding`; the Model owns a single
+    `rotary_emb` and passes cos/sin down as `position_embeddings`.
+  - `TRF051`: no comparisons against `_attn_implementation` in modeling code; dispatch belongs to
+    `ALL_ATTENTION_FUNCTIONS.get_interface` and backend-conditional tensor handling to `integrations/`.
+  - `TRF052`: no module-level `*_ATTENTION_CLASSES` dispatch dicts, even propagated from a legacy parent.
+  - `TRF053`: no manual `shift_logits`/`shift_labels` construction; `self.loss_function` owns label shifting via
+    `labels=None, shift_labels=labels`.
+  - `TRF054`: processor media token ids (`image_token_id`/`video_token_id`/`audio_token_id`) are properties, never
+    instance attributes set in `__init__` — instance attributes serialize into `processor_config.json`.
 - Added `TRF020`, which enforces that Multi-head Latent Attention (MLA) models — those whose configuration declares
   `kv_lora_rank` — isolate the KV LoRA expansion (conventionally `kv_b_proj`, or any `nn.Linear(config.kv_lora_rank, ...)`)
   in a dedicated method (e.g. `expand_kv`) that `forward()` calls, rather than applying it inline inside `forward()`.

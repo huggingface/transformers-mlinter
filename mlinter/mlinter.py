@@ -46,6 +46,7 @@ MODELING_PATTERNS = (
     "image_processing_*.py",
     "video_processing_*.py",
     "processing_*.py",
+    "feature_extraction_*.py",
 )
 DEFAULT_RULE_SPECS_PATH = Path(__file__).with_name("rules.toml")
 RULE_SPECS_VERSION = 1
@@ -256,7 +257,15 @@ def _is_modeling_candidate(path: Path) -> bool:
     return (
         path.suffix == ".py"
         and path.name.startswith(
-            ("modeling_", "modular_", "configuration_", "image_processing_", "video_processing_", "processing_")
+            (
+                "modeling_",
+                "modular_",
+                "configuration_",
+                "image_processing_",
+                "video_processing_",
+                "processing_",
+                "feature_extraction_",
+            )
         )
         and MODELS_ROOT in path.parents
     )

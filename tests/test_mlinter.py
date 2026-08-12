@@ -32,6 +32,7 @@ from mlinter import trf019 as _trf019_mod
 from mlinter import trf020 as _trf020_mod
 from mlinter import trf022 as _trf022_mod
 from mlinter import trf023 as _trf023_mod
+from mlinter import trf038 as _trf038_mod
 
 
 TEST_PP_PLAN_MODULES = {"foo": {"embed_tokens", "final_layer_norm", "layers", "norm"}}
@@ -3256,6 +3257,198 @@ class FooAttention(nn.Module):
         return q.permute(0, 2, 1, 3) @ k.permute(0, 2, 3, 1)
 """
         self.assertEqual(self._run(mlinter.TRF037, source), [])
+
+    # --- TRF038: every modeling-family file needs a matching test file ---
+
+    def check_trf038(self, file_name: str, tests_root: Path | None = None, source: str | None = None):
+        file_path = Path("src/transformers/models/foo") / file_name
+        source = "class FooModel: ...\n" if source is None else source
+        with patch.object(_trf038_mod, "TESTS_ROOT", tests_root or Path("/nonexistent/tests/models")):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF038})
+        return [v for v in violations if v.rule_id == mlinter.TRF038]
+
+    def test_trf038_flags_missing_test_file(self):
+        violations = self.check_trf038("modeling_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("tests/models/foo/test_modeling_foo.py", violations[0].message)
+
+    def test_trf038_allows_existing_test_file(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tests_root = Path(tmp_dir) / "tests" / "models"
+            (tests_root / "foo").mkdir(parents=True)
+            (tests_root / "foo" / "test_modeling_foo.py").write_text("class FooModelTest: ...\n", encoding="utf-8")
+            self.assertEqual(self.check_trf038("modeling_foo.py", tests_root=tests_root), [])
+
+    def test_trf038_maps_image_processing_files(self):
+        violations = self.check_trf038("image_processing_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("test_image_processing_foo.py", violations[0].message)
+
+    def test_trf038_ignores_configuration_files(self):
+        # Config classes are conventionally covered by ConfigTester inside test_modeling_*.py,
+        # so configuration_*.py does not need a standalone test file.
+        self.assertEqual(self.check_trf038("configuration_foo.py"), [])
+
+    def test_trf038_preserves_composite_name_directory_suffix(self):
+        # modeling_foo_text.py -> test_modeling_foo_text.py, not test_modeling_text.py.
+        violations = self.check_trf038("modeling_foo_text.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("test_modeling_foo_text.py", violations[0].message)
+
+    def test_trf038_has_no_suppression_escape_hatch(self):
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        source = "class FooModel: ...  # trf-ignore: TRF038\n"
+        with patch.object(_trf038_mod, "TESTS_ROOT", Path("/nonexistent/tests/models")):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF038})
+        self.assertEqual(len([v for v in violations if v.rule_id == mlinter.TRF038]), 1)
+
+    def test_trf038_modular_infers_single_category_from_class_names(self):
+        source = """
+class FooConfig(PretrainedConfig):
+    pass
+
+class FooModel(FooPreTrainedModel):
+    pass
+
+class FooForCausalLM(FooPreTrainedModel):
+    pass
+"""
+        violations = self.check_trf038("modular_foo.py", source=source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("test_modeling_foo.py", violations[0].message)
+
+    def test_trf038_modular_infers_multiple_categories_from_class_names(self):
+        source = """
+class FooConfig(PretrainedConfig):
+    pass
+
+class FooModel(FooPreTrainedModel):
+    pass
+
+class FooImageProcessorFast(BaseImageProcessorFast):
+    pass
+
+class FooProcessor(ProcessorMixin):
+    pass
+"""
+        violations = self.check_trf038("modular_foo.py", source=source)
+        messages = {v.message for v in violations}
+        self.assertEqual(len(violations), 3)
+        self.assertTrue(any("test_modeling_foo.py" in m for m in messages))
+        self.assertTrue(any("test_image_processing_foo.py" in m for m in messages))
+        self.assertTrue(any("test_processing_foo.py" in m for m in messages))
+        # ImageProcessorFast must resolve to the shared image-processing test file, not a
+        # nonexistent `test_image_processing_fast_foo.py`.
+        self.assertFalse(any("fast" in m.lower() for m in messages))
+
+    def test_trf038_modular_reports_one_violation_per_missing_category(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    pass
+
+class FooVideoProcessor(BaseVideoProcessor):
+    pass
+"""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tests_root = Path(tmp_dir) / "tests" / "models"
+            (tests_root / "foo").mkdir(parents=True)
+            (tests_root / "foo" / "test_modeling_foo.py").write_text("class FooModelTest: ...\n", encoding="utf-8")
+            violations = self.check_trf038("modular_foo.py", source=source, tests_root=tests_root)
+
+        self.assertEqual(len(violations), 1)
+        self.assertIn("test_video_processing_foo.py", violations[0].message)
+
+    # --- TRF039: imports guarded by is_*_available() must actually be used ---
+
+    def test_trf039_flags_unused_guarded_import(self):
+        source = """
+if is_vision_available():
+    from PIL import Image
+
+def foo():
+    return 1
+"""
+        violations = self._run(mlinter.TRF039, source, file_name="image_processing_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`Image`", violations[0].message)
+
+    def test_trf039_flags_unused_guarded_import_after_ruff(self):
+        source = """
+if is_vision_available():
+    pass
+
+def foo():
+    return 1
+"""
+        violations = self._run(mlinter.TRF039, source, file_name="image_processing_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("Availability guard has an empty body", violations[0].message)
+
+    def test_trf039_allows_used_guarded_import(self):
+        source = """
+if is_vision_available():
+    from PIL import Image
+
+def foo(x):
+    return Image.open(x)
+"""
+        self.assertEqual(self._run(mlinter.TRF039, source, file_name="image_processing_foo.py"), [])
+
+    def test_trf039_allows_usage_in_string_type_hint(self):
+        source = """
+if is_vision_available():
+    from PIL import Image
+
+def foo(x: "Image.Image"):
+    return x
+"""
+        self.assertEqual(self._run(mlinter.TRF039, source, file_name="image_processing_foo.py"), [])
+
+    def test_trf039_respects_suppression_comment(self):
+        source = """
+if is_vision_available():
+    from PIL import Image  # trf-ignore: TRF039
+
+def foo():
+    return 1
+"""
+        self.assertEqual(self._run(mlinter.TRF039, source, file_name="image_processing_foo.py"), [])
+
+    def test_trf039_handles_combined_availability_guard(self):
+        source = """
+if is_torch_available():
+    if is_torchvision_available():
+        import torchvision
+        from PIL import Image
+
+def foo():
+    return torchvision.nn.functional.resize(image)
+"""
+        violations = self._run(mlinter.TRF039, source, file_name="image_processing_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`Image`", violations[0].message)
+
+    def test_trf039_ignores_imports_outside_availability_guard(self):
+        source = """
+if some_other_condition():
+    from PIL import Image
+
+def foo():
+    return 1
+"""
+        self.assertEqual(self._run(mlinter.TRF039, source, file_name="image_processing_foo.py"), [])
+
+    def test_trf039_handles_aliased_and_dotted_imports(self):
+        source = """
+if is_torch_available():
+    import torch.nn as nn
+
+def foo():
+    return 1
+"""
+        violations = self._run(mlinter.TRF039, source, file_name="modeling_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`nn`", violations[0].message)
 
 
 if __name__ == "__main__":

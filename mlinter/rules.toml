@@ -658,3 +658,29 @@ diff = '''
 -        pair_bias = torch.einsum("bqhc,bkhc->bhqk", query_states, key_states)
 +        pair_bias = query_states.permute(0, 2, 1, 3) @ key_states.permute(0, 2, 3, 1)
 '''
+
+[rules.TRF038]
+description = "Every modeling-family source file needs a matching test file under tests/models/."
+default_enabled = true
+allowlist_models = ["bros", "cohere_asr", "emu3", "exaone4_5", "gemma4", "glm46v", "glm_image", "glmga", "granite_speech", "higgs_audio_v2", "inkling", "kyutai_speech_to_text", "lasr", "minimax_m3_vl", "moonshine_streaming", "nemotron_asr_streaming", "nemotron3_5_asr", "nougat", "paddleocr_vl", "pe_audio", "pe_video", "pe_audio_video", "pi0", "pp_formulanet", "rf_detr", "sam2", "sam2_video", "sam3_tracker", "sam3_tracker_video", "sam3_video", "siglip", "siglip2", "tvp", "video_llava", "vilt", "vjepa2", "voxtral", "voxtral_realtime", "x_clip"]
+
+[rules.TRF038.explanation]
+what_it_does = "For each modeling_*.py, processing_*.py, image_processing_*.py, video_processing_*.py and feature_extraction_*.py file, checks that a corresponding tests/models/<model>/test_*.py file exists (e.g. modeling_acme.py -> tests/models/acme/test_modeling_acme.py). configuration_*.py is exempt since config classes are conventionally covered by ConfigTester inside the companion test_modeling_*.py file. modular_*.py files are handled separately: since a single modular file can define modeling, processing, image/video-processor and config classes together, the classes it defines are classified by name suffix (XxxModel/XxxPreTrainedModel/XxxForCausalLM -> modeling, XxxImageProcessor(Fast) -> image processing, XxxProcessor -> processing, XxxVideoProcessor -> video processing, XxxFeatureExtractor -> feature extraction, XxxConfig -> skipped), and one violation is reported per missing test file, not just one per source file. There is no `# trf-ignore: TRF038` support for this rule: use `allowlist_models` if a model genuinely cannot ship a test yet, so the exemption is visible in review."
+why_bad = "A source file with no test file has no regression coverage: a broken forward pass, a bad conversion mapping, or a processor bug can land and stay broken indefinitely. Every model can be exercised with a dummy config and randomly initialized weights, so 'nothing to test' is not a valid reason to skip this."
+diff = '''
+ src/transformers/models/acme/modeling_acme.py
++tests/models/acme/test_modeling_acme.py
+'''
+
+[rules.TRF039]
+description = "Imports guarded by is_*_available() must be removed once nothing in the file uses them."
+default_enabled = true
+allowlist_models = []
+
+[rules.TRF039.explanation]
+what_it_does = "Finds `if is_*_available(): import ...` blocks (including combinations like `is_vision_available() and is_torch_available()`) and checks whether the imported name is referenced anywhere else in the file, including inside string type hints and __all__. Flags the import if it is not."
+why_bad = "ruff's unused-import check does not clean these up, because the import is reachable and 'used' as far as static analysis of the block alone is concerned. When code is refactored to no longer need PIL.Image, torch, etc., the guarded import is easy to forget and lingers as dead weight and a misleading signal about the file's real dependencies."
+diff = '''
+ if is_vision_available():
+-    from PIL import Image
+'''

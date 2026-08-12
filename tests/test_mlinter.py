@@ -3806,6 +3806,22 @@ class FooTokenizationTest(unittest.TestCase):
 """
         self.assertEqual(self._trf042(source), [])
 
+    def test_trf042_helper_carrying_the_mixin_does_not_satisfy_the_rule(self):
+        """A mixin on a helper does not run under the test runner, so the real test class still owes it."""
+        source = """
+class FooTokenizerHelper(TokenizerTesterMixin):
+    def build(self):
+        return None
+
+
+class FooTokenizationTest(unittest.TestCase):
+    def test_encode(self):
+        self.assertEqual(tokenizer("hi").input_ids, [1, 2])
+"""
+        violations = self._trf042(source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("FooTokenizationTest", violations[0].message)
+
     def test_trf042_accepts_a_local_base_carrying_the_mixin(self):
         source = """
 class FooTokenizationTestBase(TokenizerTesterMixin, unittest.TestCase):

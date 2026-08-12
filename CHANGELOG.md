@@ -47,7 +47,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `TokenizerTesterMixin`. `TokenizerTesterMixin` is where encode/decode round-tripping, padding and truncation,
   special-token handling and save/load equivalence are actually checked, so a file that only asserts a couple of
   hand-written id lists looks tested while the tokenizer is broken in every one of those dimensions. Files whose only
-  classes are helpers are skipped, and inheritance is followed through local base classes and into another model's
+  classes are helpers are skipped — only classes the runner collects count, so a helper mixing in the suite does not
+  satisfy the rule for a real test class — and inheritance is followed through local base classes and into another model's
   tokenizer test — `DistilBertTokenizationTest(test_tokenization_bert.BertTokenizationTest)` counts as satisfied
   because the class it derives from carries the mixin. A base the tests tree cannot resolve never counts. Five of the
   six tokenizer tests missing the mixin predate 2026 and are grandfathered by `cutoff_date`; `auto` is allowlisted

@@ -45,6 +45,19 @@ def _base_name(base: ast.expr) -> str:
         return ""
 
 
+def _is_test_class(class_node: ast.ClassDef) -> bool:
+    """Whether the class is one the test runner collects, rather than a helper or a mixin.
+
+    A `TestCase` base is the real marker, and the naming convention covers the case where the base is
+    another model's test class instead (`FooTokenizationTest(BertTokenizationTest)`). Deriving from a
+    mixin is deliberately not enough: `TokenizerTesterMixin` is the suite, not a test class, so a helper
+    that mixes it in never satisfies the rule on a real test class's behalf.
+    """
+    if class_node.name.endswith(("Test", "TestCase")):
+        return True
+    return any(_base_name(base).endswith("TestCase") for base in class_node.bases)
+
+
 def _dotted_bases(class_node: ast.ClassDef) -> list[str]:
     """The dotted name of every base, skipping the ones `full_name` cannot render (subscripts, calls)."""
     names = []
@@ -141,18 +154,13 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
 
     test_classes: list[ast.ClassDef] = []
     for node in tree.body:
-        if not isinstance(node, ast.ClassDef):
+        if not isinstance(node, ast.ClassDef) or not _is_test_class(node):
             continue
+        # Only a test class can satisfy the rule. A helper that carries the mixin does not run under the
+        # test runner, so it would otherwise silence the file while the real test class skips the suite.
         if _inherits_mixin(_dotted_bases(node), tree, set(), 0):
             return []
-        # `unittest.TestCase` subclasses are the ones expected to carry the mixin; helper classes and
-        # plain data holders in the same file are not.
-        if any(
-            isinstance(base, ast.Attribute | ast.Name)
-            and _base_name(base).endswith(("TestCase", "TesterMixin", "Tester"))
-            for base in node.bases
-        ):
-            test_classes.append(node)
+        test_classes.append(node)
 
     if not test_classes:
         return []

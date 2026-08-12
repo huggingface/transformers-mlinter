@@ -29,7 +29,7 @@ from typing import cast
 from rich import print
 from rich.console import Console
 
-from ._helpers import MODELS_ROOT, Violation, _model_dir_name
+from ._helpers import MODELS_ROOT, TESTS_ROOT, Violation, _model_dir_name
 from ._version import __version__
 
 
@@ -48,6 +48,10 @@ MODELING_PATTERNS = (
     "processing_*.py",
     "feature_extraction_*.py",
 )
+# Test files a rule may target, discovered under TESTS_ROOT rather than MODELS_ROOT. Every rule gates on
+# the file name prefix, so widening discovery does not expose existing rules to these files.
+TEST_PATTERNS = ("test_tokenization_*.py",)
+FILE_PREFIXES = tuple(pattern.removesuffix("*.py") for pattern in MODELING_PATTERNS + TEST_PATTERNS)
 DEFAULT_RULE_SPECS_PATH = Path(__file__).with_name("rules.toml")
 RULE_SPECS_VERSION = 1
 _RULE_REGISTRY_GLOBALS = (
@@ -238,10 +242,11 @@ def _is_generated_file(path: Path) -> bool:
 
 def iter_modeling_files(paths: set[Path] | None = None):
     if paths is None:
-        for pattern in MODELING_PATTERNS:
-            for path in MODELS_ROOT.rglob(pattern):
-                if not _is_generated_file(path):
-                    yield path
+        for root, patterns in ((MODELS_ROOT, MODELING_PATTERNS), (TESTS_ROOT, TEST_PATTERNS)):
+            for pattern in patterns:
+                for path in root.rglob(pattern):
+                    if not _is_generated_file(path):
+                        yield path
         return
 
     for path in sorted(paths):
@@ -256,18 +261,8 @@ def colored_error_message(file_path: str, line_number: int, message: str) -> str
 def _is_modeling_candidate(path: Path) -> bool:
     return (
         path.suffix == ".py"
-        and path.name.startswith(
-            (
-                "modeling_",
-                "modular_",
-                "configuration_",
-                "image_processing_",
-                "video_processing_",
-                "processing_",
-                "feature_extraction_",
-            )
-        )
-        and MODELS_ROOT in path.parents
+        and path.name.startswith(FILE_PREFIXES)
+        and (MODELS_ROOT in path.parents or TESTS_ROOT in path.parents)
     )
 
 

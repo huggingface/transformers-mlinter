@@ -43,6 +43,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   directive, instead of repeating a per-branch suppression. `self.config.x`, `config.x` and `x` all name the same
   field, and the directive has to name at least one, so a bare `# trf-ignore: TRF041` still means only its own line.
   Exemption is per field: a branch reading several config fields is skipped only when every one of them is exempt.
+- Added `TRF042`, which requires a `test_tokenization_*.py` file to define a test class inheriting
+  `TokenizerTesterMixin`. `TokenizerTesterMixin` is where encode/decode round-tripping, padding and truncation,
+  special-token handling and save/load equivalence are actually checked, so a file that only asserts a couple of
+  hand-written id lists looks tested while the tokenizer is broken in every one of those dimensions. Files whose only
+  classes are helpers are skipped — only classes the runner collects count, so a helper mixing in the suite does not
+  satisfy the rule for a real test class — and inheritance is followed through local base classes and into another model's
+  tokenizer test — `DistilBertTokenizationTest(test_tokenization_bert.BertTokenizationTest)` counts as satisfied
+  because the class it derives from carries the mixin. A base the tests tree cannot resolve never counts. Five of the
+  six tokenizer tests missing the mixin predate 2026 and are grandfathered by `cutoff_date`; `auto` is allowlisted
+  because `test_tokenization_auto.py` tests `AutoTokenizer` resolution rather than one model's tokenizer.
+- **Widened file discovery to the tests tree.** `iter_modeling_files` now also walks
+  `tests/models/**/test_tokenization_*.py` via a new shared `TESTS_ROOT`, `_model_dir_name` resolves a model name from
+  either root, and `--changed-only` accepts those paths. This changes which files the linter walks for *every* rule, so
+  it is worth noting even though no existing rule is affected: they all gate on the file-name prefix, and a full scan
+  confirms none of `TRF001`-`TRF041` fires on a test file. File count on a current checkout goes from 1 132 to 1 222.
 - Added `TRF020`, which enforces that Multi-head Latent Attention (MLA) models — those whose configuration declares
   `kv_lora_rank` — isolate the KV LoRA expansion (conventionally `kv_b_proj`, or any `nn.Linear(config.kv_lora_rank, ...)`)
   in a dedicated method (e.g. `expand_kv`) that `forward()` calls, rather than applying it inline inside `forward()`.

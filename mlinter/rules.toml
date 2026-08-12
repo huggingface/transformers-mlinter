@@ -701,3 +701,22 @@ diff = '''
  def forward(self, x):
      return AcmeModelOutput(last_hidden_state=x)
 '''
+
+[rules.TRF041]
+description = "A config-gated branch must carry a `# CODEPATH:` note saying which checkpoints diverge."
+default_enabled = true
+allowlist_models = ["dinov3_vit", "inkling", "kimi_k25", "kosmos2", "mimo_v2_flash", "openai", "timm_backbone", "timm_wrapper", "tipsv2", "vitpose_backbone", "x_clip"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF041.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags every `if`/`elif` statement and every conditional expression whose condition reads a `config.*` or `self.config.*` attribute and that does not carry a `# CODEPATH:` comment. The comment is accepted on the branch line itself or anywhere in the contiguous comment block directly above it, so it can head a multi-line explanation. Deliberately broad: any config attribute in the condition counts, not only boolean feature flags, because a branch on a numeric or optional config field forks the graph exactly as much as a branch on a flag does. One shape is exempt outright, by structure rather than by name: `X if X is not None else fallback`, where the field under test is itself one of the two results. That yields the field when set and a default when not, which is `getattr(config, x, default)` spelled long, so it cannot fork the graph and there is no path to name. Merely mentioning None does not qualify — `config.vision_config is not None` selects a whole extra tower and still owes a note. A field that gates no checkpoint divergence at all, such as `problem_type` selecting a loss or `hidden_act` looking up an activation, can be exempted for a whole file with a module-level `# trf-ignore: TRF041 config.problem_type, config.hidden_act` directive at column 0, naming the fields comma- or space-separated; `self.config.x`, `config.x` and `x` all name the same field. The directive has to name at least one field, so a bare `# trf-ignore: TRF041` keeps its per-line meaning instead of muting the file. Exemption is per field, not per branch: a condition reading several config fields is skipped only when every one of them is exempt, so `if config.problem_type and config.use_cache` still has to explain itself when only `problem_type` is named."
+why_bad = "Every config-gated branch is a second architecture living in the same file, and the reader cannot tell from the code whether both halves are reachable. That is why reviewers ask \"is this ever used?\", \"are they all needed?\" and \"why are there so many cases?\" on almost every new model, and why dead experimental branches survive for releases. This rule does not forbid the branch; it borrows Rust's `// SAFETY:` discipline and makes the author write down the justification next to it. A branch nobody can name a checkpoint for is a branch to delete, and the note makes that obvious at review time instead of three rounds later."
+diff = '''
++        # CODEPATH: ESMC-6B ships pre-normalised embeddings, the 300M/600M checkpoints do not.
+         if config.use_embedding_norm:
+             hidden_states = self.embedding_norm(hidden_states)
+
+-        if config.msa_encoder_enabled:
+-            hidden_states = self.msa_encoder(hidden_states)
++        # no released checkpoint sets msa_encoder_enabled -> branch removed
+'''

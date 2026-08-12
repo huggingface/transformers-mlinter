@@ -24,6 +24,7 @@ pip install -e ".[quality]"
 - A `RULE_ID` module-level constant is set automatically by the discovery mechanism.
 - Every discovered rule must have a matching entry in the TOML file, and every TOML rule must have a matching module. Import-time validation fails if either side is missing.
 - Suppressions use `# trf-ignore: TRFXXX` on the same line or the line immediately above the flagged construct.
+- Some rules also accept a module-level `# trf-ignore: TRFXXX <subject>, ...` directive at column 0, which exempts only the named subjects for the whole file. `TRF041` uses it for config fields that gate the same branch in every model — `# trf-ignore: TRF041 problem_type, hidden_act` — so one comment replaces a dozen identical per-branch notes. Naming no subject keeps the directive per-line, so it never widens into a whole-file mute. Check the rule's entry in `mlinter/rules.toml` for whether it honours subjects.
 
 ## How to add a new TRF rule
 

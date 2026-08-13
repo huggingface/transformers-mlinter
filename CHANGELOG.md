@@ -5,7 +5,7 @@ All notable changes to `transformers-mlinter` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.3] - 2026-08-13
 
 ### Added
 
@@ -186,6 +186,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Improved
 
+- Added `--output-json FILE`, which writes every finding to `FILE` as JSON alongside the normal output: a
+  `findings` list of `{"path", "line", "rule", "message"}` objects plus a `rules` map carrying the
+  description, `why_bad` and diff of each rule that fired. The file is always written, so a consumer never
+  has to distinguish "clean run" from "no file produced", and the exit code is unaffected. The transformers
+  CI uses it to upload findings as an artifact and post them as inline review comments.
 - **Documentation site** published at <https://huggingface.github.io/transformers-mlinter/>, built
   with Jekyll + just-the-docs from `docs/` by `.github/workflows/pages.yml`. The per-rule reference is
   generated from `mlinter/rules.toml` by `scripts/build_docs.py`, so a rule's `description` and
@@ -214,6 +219,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Removed a stale `# type: ignore[union-attr]` in `TRF019` that `ty` reported as an unused suppression, so
   `make typecheck` is clean.
+- Fixed the reviewer context script computing the next free rule ID from the PR's own checkout, which made it
+  report the rule ID the PR adds as already taken and ask for a needless renumbering.
 
 ## [0.1.2] - 2026-07-08
 

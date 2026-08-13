@@ -56,9 +56,12 @@ def _imported_bindings(stmt: ast.Import | ast.ImportFrom) -> list[tuple[str, ast
     return [(alias.asname or alias.name.split(".")[0], alias) for alias in stmt.names]
 
 
-def _guarded_imports(tree: ast.Module) -> list[tuple[str, ast.stmt, ast.alias]]:
-    """Collect `(bound_name, import_stmt, alias)` for every import sitting inside an availability guard."""
-    found: list[tuple[str, ast.stmt, ast.alias]] = []
+def _guarded_imports(tree: ast.Module) -> list[tuple[str, ast.stmt, ast.alias | None]]:
+    """Collect `(bound_name, import_stmt, alias)` for every import sitting inside an availability guard.
+
+    An empty guard body is reported as the sentinel name `"pass"` with no alias.
+    """
+    found: list[tuple[str, ast.stmt, ast.alias | None]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.If) or not _guards_on_availability(node.test):
             continue

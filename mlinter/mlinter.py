@@ -609,8 +609,9 @@ def main() -> int:
                 "rules": {
                     rule: {
                         "description": TRF_RULE_SPECS[rule]["description"],
-                        "why_bad": TRF_RULE_SPECS[rule]["explanation"]["why_bad"],
-                        "diff": TRF_RULE_SPECS[rule]["explanation"]["diff"],
+                        # Validated as a dict[str, str] by _load_rule_specs.
+                        "why_bad": cast(dict[str, str], TRF_RULE_SPECS[rule]["explanation"])["why_bad"],
+                        "diff": cast(dict[str, str], TRF_RULE_SPECS[rule]["explanation"])["diff"],
                     }
                     for rule in rules_used
                 },

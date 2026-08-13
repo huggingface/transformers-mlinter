@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "transformers-mlinter"
-version = "0.1.2"
+version = "0.1.3"
 description = "Lint Hugging Face Transformers model integration files for structural conventions."
 readme = "README.md"
 license = "Apache-2.0"

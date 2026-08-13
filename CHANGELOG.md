@@ -186,6 +186,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added `TRF037`, which flags `einsum` in modeling files and reports the equation when it is a literal.
   **Disabled by default** — einsum is occasionally the clearest way to write a contraction, so this is opt-in via
   `--enable-rules TRF037` rather than a hard convention. `x_clip` is allowlisted.
+- Added `TRF056`, which flags `.item()` and `.tolist()` inside a `forward` in `modeling_*.py` and `modular_*.py`.
+  Both read a tensor back to the host, so the dynamo graph breaks at the use site. A `.tolist()` whose result is the
+  split-size argument of `split(...)`, passed directly or through a local, is exempt as `torch.split` needs Python
+  ints.
+- Added `TRF057`, which flags a missing `@auto_docstring` on the classes that need it: public `PreTrainedModel`
+  subclasses (`<Model>PreTrainedModel`, `<Model>Model`, `<Model>For<Task>`, backbones), `PreTrainedConfig` subclasses,
+  `ModelOutput` subclasses, image processors and `ProcessorMixin` subclasses, and on their public methods: `forward`,
+  `get_image_features`, `get_video_features`, `get_audio_features`, `get_text_features`, `preprocess` and `__call__`.
+  A class or method in a `modular_*.py` file is checked against the files generated from it.
+- Moved the modular generation banner into `mlinter/_helpers.py` as `GENERATED_FILE_MARKER`, next to a new
+  `read_file_head` helper, so rules that read a generated file recognise it the same way `_is_generated_file` does.
 
 ### Fixed
 

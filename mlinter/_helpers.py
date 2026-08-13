@@ -25,6 +25,12 @@ MODELS_ROOT = Path("src/transformers/models")
 TESTS_ROOT = Path("tests/models")
 DOCS_ROOT = Path("docs/source/en/model_doc")
 
+# Banner that the modular converter writes near the top of every file it generates, followed by the
+# path of the modular source, so it also says which modular file a generated file was produced from.
+GENERATED_FILE_MARKER = "This file was automatically generated from"
+# How much of a file to search for the banner. The converter always writes it in the first lines.
+GENERATED_FILE_HEAD_SIZE = 1024
+
 _CONTRIBUTION_DATE_RE = re.compile(
     r"\n\*This model was (?:published in HF papers on (.*) and )?"
     r"contributed to Hugging Face Transformers on (\d{4}-\d{2}-\d{2})\.\*"
@@ -37,6 +43,15 @@ class Violation:
     line_number: int
     message: str
     rule_id: str | None = None
+
+
+def read_file_head(path: Path) -> str | None:
+    """The first `GENERATED_FILE_HEAD_SIZE` bytes of a file, or None when it cannot be read."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return handle.read(GENERATED_FILE_HEAD_SIZE)
+    except OSError:
+        return None
 
 
 def full_name(node: ast.AST):

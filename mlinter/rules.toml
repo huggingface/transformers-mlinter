@@ -1016,3 +1016,20 @@ diff = '''
      def forward(self, input_ids, pixel_values=None, **kwargs):
          ...
 '''
+
+[rules.TRF058]
+description = "Buffers must be declared as nn.Buffer attributes, not registered with register_buffer()."
+default_enabled = true
+allowlist_models = ["falcon_h1", "pp_doclayout_v2"]
+
+[rules.TRF058.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags `register_buffer(\"<name>\", ...)` calls whose buffer name is a string literal, on any receiver (`self`, or another module such as `layer.mamba`). Calls with a computed name (a variable or an f-string, e.g. one buffer per layer inside a loop) have no attribute-assignment equivalent and are exempt."
+why_bad = "Since torch>=2.5, `nn.Buffer` registers a buffer through plain attribute assignment, the same way `nn.Parameter` does. A buffer created by a method call only exists as a side effect of running `__init__`, so a modular file that wants to tweak one has to redefine the whole `__init__`. Assigned as an attribute, it can be inherited and overridden on its own."
+diff = '''
+-        self.register_buffer("inv_freq", inv_freq, persistent=False)
+-        self.register_buffer(
+-            "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+-        )
++        self.inv_freq = nn.Buffer(inv_freq, persistent=False)
++        self.position_ids = nn.Buffer(torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False)
+'''

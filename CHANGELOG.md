@@ -7,7 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-- XXX
+### Added
+
+- Added `TRF058`, which flags `register_buffer("<name>", ...)` calls in `modeling_*.py` and `modular_*.py` and asks for
+  `<name> = nn.Buffer(...)` instead. Since torch>=2.5 a buffer can be declared by plain attribute assignment, the same
+  way `nn.Parameter` is, and a buffer that is an attribute can be inherited and tweaked in a modular file instead of
+  forcing a redefinition of the whole `__init__`. Any receiver is checked (`self`, or another module such as
+  `layer.mamba`); calls whose buffer name is computed at runtime (a variable or an f-string, e.g. one buffer per layer
+  inside a loop) have no attribute-assignment equivalent and are exempt. `falcon_h1` and `pp_doclayout_v2` are
+  allowlisted pending conversion of their two remaining calls. Requested in
+  [huggingface/transformers#47722](https://github.com/huggingface/transformers/pull/47722).
 
 
 ## [0.1.3] - 2026-08-13

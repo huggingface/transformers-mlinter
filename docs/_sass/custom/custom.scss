@@ -1,0 +1,150 @@
+// Site-specific styling on top of just-the-docs.
+//
+// Three things need it: the logo lockup (which the theme's header is too short for), the 57-row rule
+// index (which has to stay scannable and filterable) and the metadata table on each rule page.
+
+// ── Logo ──────────────────────────────────────────────────────────────────────
+// _includes/title.html renders the logo as an <img> instead of the theme's background-image div, so it
+// can be sized independently of $header-height. The lockup is near-square and contains the wordmark,
+// so it needs real height to stay legible.
+.site-logo-img {
+  display: block;
+  width: auto;
+  height: auto;
+
+  // Mobile and tablet: the header is a fixed 60px bar shared with the menu button, so the lockup is
+  // reduced to a badge. The mark still reads at this size even though the wordmark goes quiet.
+  max-height: 2.5rem;
+  max-width: 100%;
+}
+
+@include mq(lg) {
+  // Desktop: the header sits at the top of the fixed sidebar column, where there is room to let the
+  // lockup breathe. Releasing the theme's locked height is what makes that possible.
+  .site-header {
+    height: auto;
+    max-height: none;
+  }
+
+  .site-title {
+    height: auto;
+    padding-top: $sp-4;
+    padding-bottom: $sp-3;
+  }
+
+  .site-logo-img {
+    max-height: none;
+    width: 11rem;
+    margin: 0 auto;
+  }
+}
+
+// ── Version badge ─────────────────────────────────────────────────────────────
+// The released version next to the site title on the home page. Set in a lighter weight and the brand
+// green so it reads as metadata attached to the name, not as part of it.
+.version-badge {
+  font-size: 0.5em;
+  font-weight: 400;
+  color: $brand-green-dark;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+// ── Rule index filter ─────────────────────────────────────────────────────────
+// The table is long enough that scrolling it is worse than typing two characters. The input is styled
+// to match the theme's search box so it reads as the same affordance.
+.rule-filter {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.5rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: $body-text-color;
+  background-color: $body-background-color;
+  border: 1px solid $border-color;
+  border-radius: $border-radius;
+
+  // The focus ring is one of the few places the vivid logo green can be used as-is: it is decoration
+  // next to the border, not text, so the 4.5:1 rule does not apply to it.
+  &:focus {
+    border-color: $brand-green-dark;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba($brand-green, 0.35);
+  }
+}
+
+.rule-filter-count {
+  min-height: 1.2em; // Reserve the line so filtering does not shift the table up and down.
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: 0.75rem;
+  color: $grey-dk-000;
+}
+
+// ── Rule index table ──────────────────────────────────────────────────────────
+.rule-table {
+  font-size: 0.78rem;
+
+  td,
+  th {
+    vertical-align: top;
+  }
+
+  // Rule codes are fixed-width identifiers; keeping them on one line stops the first column from
+  // wrapping to "TRF0" / "01" on a narrow viewport.
+  td:first-child {
+    white-space: nowrap;
+
+    a {
+      font-family: $mono-font-family;
+      font-weight: 500;
+    }
+  }
+
+  // Default and Scope: secondary information, so they get out of the way of the description.
+  td:nth-child(3),
+  td:nth-child(4) {
+    font-size: 0.72rem;
+    color: $grey-dk-100;
+    white-space: nowrap;
+  }
+}
+
+// A disabled-by-default rule is the exception, so it is the one that gets marked. Set on the cell text
+// by the filter script rather than in the generator, which keeps the Markdown table plain.
+.rule-default-disabled {
+  color: $grey-dk-000;
+}
+
+// ── Rule page metadata ────────────────────────────────────────────────────────
+// A borderless two-column table reads as a definition list rather than data, which is what it is.
+.rule-meta {
+  font-size: 0.78rem;
+
+  thead {
+    display: none; // The generator emits an empty header row to satisfy kramdown's table syntax.
+  }
+
+  td {
+    padding: 0.3rem 0.75rem 0.3rem 0;
+    border: 0;
+    vertical-align: top;
+  }
+
+  td:first-child {
+    width: 11rem;
+    white-space: nowrap;
+    color: $grey-dk-100;
+  }
+}
+
+// ── Diff examples ─────────────────────────────────────────────────────────────
+// Every rule page ends in a diff, and the +/- lines are the whole point. Rouge's default diff colours
+// are washed out at this font size, so they get a tint that survives a quick scan.
+.highlight .gi {
+  background-color: #e6ffed;
+}
+
+.highlight .gd {
+  background-color: #ffeef0;
+}

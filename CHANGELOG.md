@@ -9,89 +9,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Added `TRF038`, which checks that every `modeling_*.py`, `processing_*.py`, `image_processing_*.py`,
-  `video_processing_*.py` and `feature_extraction_*.py` file has a matching `tests/models/<model>/test_*.py` file
-  (e.g. `modeling_acme.py` -> `tests/models/acme/test_modeling_acme.py`). `configuration_*.py` is exempt, since
-  config classes are conventionally exercised through `ConfigTester` inside `test_modeling_*.py`.
-  `modular_*.py` files are handled by inspecting the classes they define rather than the filename, since one
-  modular file can mix modeling, processing, image/video-processor and config classes. This rule has
-  no `# trf-ignore: TRF038` suppression: every model can ship at least a minimal test built on a dummy config and
-  randomly initialized weights, so exemptions must go through `allowlist_models` instead, where they are visible in
-  review.
-- Added `TRF039`, which flags imports inside `if is_*_available(): ...` guards (e.g.
-  `if is_vision_available(): from PIL import Image`) that are never referenced anywhere else in the file. `ruff`
-  does not clean these up on its own, so a leftover import from a refactor silently lingers in `src/transformers`.
-  Suppress with `# trf-ignore: TRF039` for genuine false positives (e.g. names only used dynamically).
-- Added `TRF040`, which flags methods in `modeling_*.py` / `modular_*.py` decorated with both `@capture_outputs` and
-  `@can_return_tuple`. Both decorators pop `return_dict`, so only the outermost one sees the value the caller actually
-  passed while the inner one silently falls back to `self.config.return_dict`. `@capture_outputs` already handles the
-  `to_tuple` conversion, which makes `@can_return_tuple` redundant. Complements `TRF003`, which covers manual `return_dict`
-  branching. Suppress with `# trf-ignore: TRF040`.
-- Added `TRF041`, which requires a `# CODEPATH:` comment on every `if`/`elif` statement and conditional
-  expression in `modeling_*.py`/`modular_*.py` whose condition reads a `config.*` or `self.config.*` attribute.
-  The comment is accepted on the branch line or anywhere in the contiguous comment block above it, so it can head a
-  multi-line explanation. Modelled on Rust's `// SAFETY:` convention: the branch stays legal, but the author has to
-  write down which checkpoints take which path. Deliberately broad — a branch on a numeric or optional config field
-  forks the graph exactly as much as one on a boolean flag, and the library has 1 838 such branches across 330 models
-  today. `cutoff_date` grandfathers all of them; the eleven post-cutoff models are allowlisted in the TOML.
-  Default coalescing is exempt by shape, not by name: `X if X is not None else fallback`, where the tested field is
-  itself one of the results, is `getattr(config, x, default)` spelled long and cannot fork the graph, so it needs no
-  note (79 of the 2 674 firings in the library today). Mentioning None is not enough to qualify —
-  `config.vision_config is not None` gates a whole extra tower and still has to explain itself.
-  Fields that gate no checkpoint divergence — `problem_type` picking a loss, `hidden_act` picking an activation —
-  can be exempted for a whole file with a module-level `# trf-ignore: TRF041 config.problem_type, config.hidden_act`
-  directive, instead of repeating a per-branch suppression. `self.config.x`, `config.x` and `x` all name the same
-  field, and the directive has to name at least one, so a bare `# trf-ignore: TRF041` still means only its own line.
-  Exemption is per field: a branch reading several config fields is skipped only when every one of them is exempt.
-- Added `TRF042`, which requires a `test_tokenization_*.py` file to define a test class inheriting
-  `TokenizerTesterMixin`. `TokenizerTesterMixin` is where encode/decode round-tripping, padding and truncation,
-  special-token handling and save/load equivalence are actually checked, so a file that only asserts a couple of
-  hand-written id lists looks tested while the tokenizer is broken in every one of those dimensions. Files whose only
-  classes are helpers are skipped — only classes the runner collects count, so a helper mixing in the suite does not
-  satisfy the rule for a real test class — and inheritance is followed through local base classes and into another model's
-  tokenizer test — `DistilBertTokenizationTest(test_tokenization_bert.BertTokenizationTest)` counts as satisfied
-  because the class it derives from carries the mixin. A base the tests tree cannot resolve never counts. Five of the
-  six tokenizer tests missing the mixin predate 2026 and are grandfathered by `cutoff_date`; `auto` is allowlisted
-  because `test_tokenization_auto.py` tests `AutoTokenizer` resolution rather than one model's tokenizer.
-- **Widened file discovery to the tests tree.** `iter_modeling_files` now also walks
-  `tests/models/**/test_tokenization_*.py` via a new shared `TESTS_ROOT`, `_model_dir_name` resolves a model name from
-  either root, and `--changed-only` accepts those paths. This changes which files the linter walks for *every* rule, so
-  it is worth noting even though no existing rule is affected: they all gate on the file-name prefix, and a full scan
-  confirms none of `TRF001`-`TRF041` fires on a test file. File count on a current checkout goes from 1 132 to 1 222.
-- Added `TRF055`, which flags `config = SomeConfig` on `PreTrainedModel` subclasses in `modeling_*.py` and
-  `modular_*.py`; the correct form is the annotation `config: SomeConfig`. `PreTrainedModel.__init_subclass__`
-  derives `config_class` from a `config` **annotation** via `inspect.get_annotations(cls)`, so an assignment is
-  invisible to it: the class gets a stray attribute while `config_class` silently keeps the parent's, which is how
-  `Gemma4VisionModel.config_class` resolved to `Gemma4Config` instead of `Gemma4VisionConfig`. A pure annotation has
-  no runtime value, so it sets `config_class` correctly. Suppress with `# trf-ignore: TRF055`.
-- Added `TRF043`–`TRF054`, twelve rules mined from the transformers deep-review dimension registry (recurring
-  maintainer review comments across ~300 PRs, nine reviewers). Across the twelve, a current
-  transformers checkout reports three violations after allowlisting the legacy tail — `TRF043` on
-  `cohere_compass` and `TRF054` twice on `muse_glimmer`, both models added after these rules were written.
-  `TRF045` and `TRF054` additionally use `cutoff_date = "2026-06-20"` so they guard new models without opening
-  a backlog.
-  - `TRF043`: attention classes must not declare `position_ids` in their `forward` signature — it flows through
-    `**kwargs` so padding-free flash-attention can consume it.
-  - `TRF044`: no `cache_position` parameter anywhere in modeling code; it is removed framework surface and the cache
-    update call carries no position threading.
-  - `TRF045`: `forward` must not declare `output_attentions`/`output_hidden_states`/`return_dict`; the
-    `@capture_outputs`/`@can_return_tuple` decorator stack owns them.
-  - `TRF046`: `forward` must not write `self.<attr>`; modules are stateless in forward and carried state is passed
-    explicitly.
-  - `TRF047`: image/video processor `preprocess`/`_preprocess`/`__call__`/`post_process*` must not write `self.<attr>`;
-    carried state breaks preprocess-many-then-postprocess batching.
-  - `TRF048`: `_tied_weights_keys` must be the v5 dict form mapping target to source, not a list.
-  - `TRF049`: no weight-value initialization in `__init__` (`nn.init.*`, `init.*`, or in-place ops on own parameters);
-    meta-device instantiation discards it — allocate with `torch.empty` and initialize in `_init_weights`.
-  - `TRF050`: attention classes must not instantiate their own `*RotaryEmbedding`; the Model owns a single
-    `rotary_emb` and passes cos/sin down as `position_embeddings`.
-  - `TRF051`: no comparisons against `_attn_implementation` in modeling code; dispatch belongs to
-    `ALL_ATTENTION_FUNCTIONS.get_interface` and backend-conditional tensor handling to `integrations/`.
-  - `TRF052`: no module-level `*_ATTENTION_CLASSES` dispatch dicts, even propagated from a legacy parent.
-  - `TRF053`: no manual `shift_logits`/`shift_labels` construction; `self.loss_function` owns label shifting via
-    `labels=None, shift_labels=labels`.
-  - `TRF054`: processor media token ids (`image_token_id`/`video_token_id`/`audio_token_id`) are properties, never
-    instance attributes set in `__init__` — instance attributes serialize into `processor_config.json`.
 - Added `TRF020`, which enforces that Multi-head Latent Attention (MLA) models — those whose configuration declares
   `kv_lora_rank` — isolate the KV LoRA expansion (conventionally `kv_b_proj`, or any `nn.Linear(config.kv_lora_rank, ...)`)
   in a dedicated method (e.g. `expand_kv`) that `forward()` calls, rather than applying it inline inside `forward()`.
@@ -139,13 +56,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   attribute. The wrapper adds a level to every weight name, to `_no_split_modules`, to the parallelism plans and to
   every conversion mapping while contributing no computation. `PreTrainedModel` subclasses are exempt because they
   exist for `from_pretrained` and the auto classes even when the forward only delegates.
-- Shared the companion-config resolution helpers (`_find_config_file`, `_parse_config_classes`,
-  `_resolve_config_class_name_from_modeling_class`, `_resolve_target_config_class_name`) by moving them from `TRF015`
-  into `mlinter/_helpers.py`, so cross-file rules resolve a modeling class to its target config class the same way.
-- Moved `model_contribution_date` (and `DOCS_ROOT`) from `TRF019` into `mlinter/_helpers.py` and added
-  `is_exempt_by_cutoff`, so every cutoff-gated rule resolves a model's contribution date the same way. The lookup now
-  also tries the hyphenated spelling of the model directory (`blenderbot_small` → `blenderbot-small.md`), which
-  grandfathers models whose doc page uses hyphens instead of leaving them permanently unexempt.
 - Added `TRF027`, which flags bare `assert` in `modeling_*.py`, `modular_*.py` and `configuration_*.py`. `python -O`
   strips asserts, so a shape or config check written that way silently disappears, and an `AssertionError` tells the
   user nothing actionable.
@@ -186,6 +96,84 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added `TRF037`, which flags `einsum` in modeling files and reports the equation when it is a literal.
   **Disabled by default** — einsum is occasionally the clearest way to write a contraction, so this is opt-in via
   `--enable-rules TRF037` rather than a hard convention. `x_clip` is allowlisted.
+- Added `TRF038`, which checks that every `modeling_*.py`, `processing_*.py`, `image_processing_*.py`,
+  `video_processing_*.py` and `feature_extraction_*.py` file has a matching `tests/models/<model>/test_*.py` file
+  (e.g. `modeling_acme.py` -> `tests/models/acme/test_modeling_acme.py`). `configuration_*.py` is exempt, since
+  config classes are conventionally exercised through `ConfigTester` inside `test_modeling_*.py`.
+  `modular_*.py` files are handled by inspecting the classes they define rather than the filename, since one
+  modular file can mix modeling, processing, image/video-processor and config classes. This rule has
+  no `# trf-ignore: TRF038` suppression: every model can ship at least a minimal test built on a dummy config and
+  randomly initialized weights, so exemptions must go through `allowlist_models` instead, where they are visible in
+  review.
+- Added `TRF039`, which flags imports inside `if is_*_available(): ...` guards (e.g.
+  `if is_vision_available(): from PIL import Image`) that are never referenced anywhere else in the file. `ruff`
+  does not clean these up on its own, so a leftover import from a refactor silently lingers in `src/transformers`.
+  Suppress with `# trf-ignore: TRF039` for genuine false positives (e.g. names only used dynamically).
+- Added `TRF040`, which flags methods in `modeling_*.py` / `modular_*.py` decorated with both `@capture_outputs` and
+  `@can_return_tuple`. Both decorators pop `return_dict`, so only the outermost one sees the value the caller actually
+  passed while the inner one silently falls back to `self.config.return_dict`. `@capture_outputs` already handles the
+  `to_tuple` conversion, which makes `@can_return_tuple` redundant. Complements `TRF003`, which covers manual `return_dict`
+  branching. Suppress with `# trf-ignore: TRF040`.
+- Added `TRF041`, which requires a `# CODEPATH:` comment on every `if`/`elif` statement and conditional
+  expression in `modeling_*.py`/`modular_*.py` whose condition reads a `config.*` or `self.config.*` attribute.
+  The comment is accepted on the branch line or anywhere in the contiguous comment block above it, so it can head a
+  multi-line explanation. Modelled on Rust's `// SAFETY:` convention: the branch stays legal, but the author has to
+  write down which checkpoints take which path. Deliberately broad — a branch on a numeric or optional config field
+  forks the graph exactly as much as one on a boolean flag, and the library has 1 838 such branches across 330 models
+  today. `cutoff_date` grandfathers all of them; the eleven post-cutoff models are allowlisted in the TOML.
+  Default coalescing is exempt by shape, not by name: `X if X is not None else fallback`, where the tested field is
+  itself one of the results, is `getattr(config, x, default)` spelled long and cannot fork the graph, so it needs no
+  note (79 of the 2 674 firings in the library today). Mentioning None is not enough to qualify —
+  `config.vision_config is not None` gates a whole extra tower and still has to explain itself.
+  Fields that gate no checkpoint divergence — `problem_type` picking a loss, `hidden_act` picking an activation —
+  can be exempted for a whole file with a module-level `# trf-ignore: TRF041 config.problem_type, config.hidden_act`
+  directive, instead of repeating a per-branch suppression. `self.config.x`, `config.x` and `x` all name the same
+  field, and the directive has to name at least one, so a bare `# trf-ignore: TRF041` still means only its own line.
+  Exemption is per field: a branch reading several config fields is skipped only when every one of them is exempt.
+- Added `TRF042`, which requires a `test_tokenization_*.py` file to define a test class inheriting
+  `TokenizerTesterMixin`. `TokenizerTesterMixin` is where encode/decode round-tripping, padding and truncation,
+  special-token handling and save/load equivalence are actually checked, so a file that only asserts a couple of
+  hand-written id lists looks tested while the tokenizer is broken in every one of those dimensions. Files whose only
+  classes are helpers are skipped — only classes the runner collects count, so a helper mixing in the suite does not
+  satisfy the rule for a real test class — and inheritance is followed through local base classes and into another model's
+  tokenizer test — `DistilBertTokenizationTest(test_tokenization_bert.BertTokenizationTest)` counts as satisfied
+  because the class it derives from carries the mixin. A base the tests tree cannot resolve never counts. Five of the
+  six tokenizer tests missing the mixin predate 2026 and are grandfathered by `cutoff_date`; `auto` is allowlisted
+  because `test_tokenization_auto.py` tests `AutoTokenizer` resolution rather than one model's tokenizer.
+- Added `TRF043`–`TRF054`, twelve rules mined from the transformers deep-review dimension registry (recurring
+  maintainer review comments across ~300 PRs, nine reviewers). Across the twelve, a current
+  transformers checkout reports three violations after allowlisting the legacy tail — `TRF043` on
+  `cohere_compass` and `TRF054` twice on `muse_glimmer`, both models added after these rules were written.
+  `TRF045` and `TRF054` additionally use `cutoff_date = "2026-06-20"` so they guard new models without opening
+  a backlog.
+  - `TRF043`: attention classes must not declare `position_ids` in their `forward` signature — it flows through
+    `**kwargs` so padding-free flash-attention can consume it.
+  - `TRF044`: no `cache_position` parameter anywhere in modeling code; it is removed framework surface and the cache
+    update call carries no position threading.
+  - `TRF045`: `forward` must not declare `output_attentions`/`output_hidden_states`/`return_dict`; the
+    `@capture_outputs`/`@can_return_tuple` decorator stack owns them.
+  - `TRF046`: `forward` must not write `self.<attr>`; modules are stateless in forward and carried state is passed
+    explicitly.
+  - `TRF047`: image/video processor `preprocess`/`_preprocess`/`__call__`/`post_process*` must not write `self.<attr>`;
+    carried state breaks preprocess-many-then-postprocess batching.
+  - `TRF048`: `_tied_weights_keys` must be the v5 dict form mapping target to source, not a list.
+  - `TRF049`: no weight-value initialization in `__init__` (`nn.init.*`, `init.*`, or in-place ops on own parameters);
+    meta-device instantiation discards it — allocate with `torch.empty` and initialize in `_init_weights`.
+  - `TRF050`: attention classes must not instantiate their own `*RotaryEmbedding`; the Model owns a single
+    `rotary_emb` and passes cos/sin down as `position_embeddings`.
+  - `TRF051`: no comparisons against `_attn_implementation` in modeling code; dispatch belongs to
+    `ALL_ATTENTION_FUNCTIONS.get_interface` and backend-conditional tensor handling to `integrations/`.
+  - `TRF052`: no module-level `*_ATTENTION_CLASSES` dispatch dicts, even propagated from a legacy parent.
+  - `TRF053`: no manual `shift_logits`/`shift_labels` construction; `self.loss_function` owns label shifting via
+    `labels=None, shift_labels=labels`.
+  - `TRF054`: processor media token ids (`image_token_id`/`video_token_id`/`audio_token_id`) are properties, never
+    instance attributes set in `__init__` — instance attributes serialize into `processor_config.json`.
+- Added `TRF055`, which flags `config = SomeConfig` on `PreTrainedModel` subclasses in `modeling_*.py` and
+  `modular_*.py`; the correct form is the annotation `config: SomeConfig`. `PreTrainedModel.__init_subclass__`
+  derives `config_class` from a `config` **annotation** via `inspect.get_annotations(cls)`, so an assignment is
+  invisible to it: the class gets a stray attribute while `config_class` silently keeps the parent's, which is how
+  `Gemma4VisionModel.config_class` resolved to `Gemma4Config` instead of `Gemma4VisionConfig`. A pure annotation has
+  no runtime value, so it sets `config_class` correctly. Suppress with `# trf-ignore: TRF055`.
 - Added `TRF056`, which flags `.item()` and `.tolist()` inside a `forward` in `modeling_*.py` and `modular_*.py`.
   Both read a tensor back to the host, so the dynamo graph breaks at the use site. A `.tolist()` whose result is the
   split-size argument of `split(...)`, passed directly or through a local, is exempt as `torch.split` needs Python
@@ -195,6 +183,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `ModelOutput` subclasses, image processors and `ProcessorMixin` subclasses, and on their public methods: `forward`,
   `get_image_features`, `get_video_features`, `get_audio_features`, `get_text_features`, `preprocess` and `__call__`.
   A class or method in a `modular_*.py` file is checked against the files generated from it.
+
+### Improved
+
+- **Documentation site** published at <https://huggingface.github.io/transformers-mlinter/>, built
+  with Jekyll + just-the-docs from `docs/` by `.github/workflows/pages.yml`. The per-rule reference is
+  generated from `mlinter/rules.toml` by `scripts/build_docs.py`, so a rule's `description` and
+  `explanation` fields are now published prose and adding a rule documents it with no page to write.
+  `docs/rules/` is git-ignored and rebuilt on every build. Build locally with `make docs` (or
+  `make docs-serve` to preview); the `README.md` long-form content moved to `docs/index.md` and the
+  CLI reference to `docs/usage.md`.
+- **Project logo**, used in the docs sidebar, as the site favicon (cropped to the mark, since a
+  tab icon cannot render the wordmark), as the `og:image` social preview, and at the top of `README.md`.
+- **Widened file discovery to the tests tree.** `iter_modeling_files` now also walks
+  `tests/models/**/test_tokenization_*.py` via a new shared `TESTS_ROOT`, `_model_dir_name` resolves a model name from
+  either root, and `--changed-only` accepts those paths. This changes which files the linter walks for *every* rule, so
+  it is worth noting even though no existing rule is affected: they all gate on the file-name prefix, and a full scan
+  confirms none of `TRF001`-`TRF041` fires on a test file. File count on a current checkout goes from 1 132 to 1 222.
+- Shared the companion-config resolution helpers (`_find_config_file`, `_parse_config_classes`,
+  `_resolve_config_class_name_from_modeling_class`, `_resolve_target_config_class_name`) by moving them from `TRF015`
+  into `mlinter/_helpers.py`, so cross-file rules resolve a modeling class to its target config class the same way.
+- Moved `model_contribution_date` (and `DOCS_ROOT`) from `TRF019` into `mlinter/_helpers.py` and added
+  `is_exempt_by_cutoff`, so every cutoff-gated rule resolves a model's contribution date the same way. The lookup now
+  also tries the hyphenated spelling of the model directory (`blenderbot_small` → `blenderbot-small.md`), which
+  grandfathers models whose doc page uses hyphens instead of leaving them permanently unexempt.
 - Moved the modular generation banner into `mlinter/_helpers.py` as `GENERATED_FILE_MARKER`, next to a new
   `read_file_head` helper, so rules that read a generated file recognise it the same way `_is_generated_file` does.
 

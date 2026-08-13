@@ -1,3 +1,10 @@
+---
+layout: default
+title: Releasing
+nav_order: 7
+description: "The tag-driven release process for transformers-mlinter: version bump, validation, release branch, tag push, PyPI publish via GitHub OIDC."
+---
+
 # Releasing `transformers-mlinter`
 
 This repository uses a tag-driven GitHub Actions release workflow similar to `transformers`.

@@ -1,0 +1,17 @@
+{%- comment -%}
+  Overrides just-the-docs' own _includes/title.html.
+
+  The theme renders `site.logo` as a `.site-logo` div with a background-image, stretched to the height
+  of `.site-header` — which is locked to $header-height (3.75rem / 60px). That is the right treatment
+  for a wide wordmark, but ours is a near-square lockup: at 60px tall the "MLinter" text inside it
+  would be about 15px and unreadable.
+
+  So this renders a real <img> instead, which custom.scss can size per breakpoint — displayed large in
+  the sidebar column on desktop, and as a compact badge in the 60px mobile bar. The alt text carries
+  the site name because the image *is* the title here; there is no adjacent text to read it from.
+{%- endcomment -%}
+{%- if site.logo -%}
+  <img class="site-logo-img" src="{{ site.logo | relative_url }}" alt="{{ site.title }}" width="800" height="759">
+{%- else -%}
+  {{ site.title }}
+{%- endif -%}

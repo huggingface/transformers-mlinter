@@ -1,0 +1,17 @@
+// Brand palette.
+//
+// This file is imported before just-the-docs' colour schemes, so assigning here overrides their
+// `!default` values. Purple reaches the whole theme through just two variables — `$link-color` and
+// `$btn-primary-color` — and everything else (nav hover and active states, buttons, the code-block
+// focus outline) derives from those, so recolouring is a two-line change.
+//
+// The logo's green is #44b533, but it only reaches 2.66:1 against white — well under the 4.5:1 WCAG AA
+// requires for text — so it cannot be the link colour. The interactive shades below are the same hue
+// (112°) and saturation darkened until they clear AA on both white and the #f5f6fa sidebar, which is
+// why links look like the logo without being the logo's exact green.
+$brand-green: #44b533; // the logo green; decorative only, never text
+$brand-green-dark: #2f7d23; // 5.15:1 on white, 4.77:1 on the sidebar
+$brand-green-darker: #2b7120; // 6.02:1 on white, for hover and active states
+
+$link-color: $brand-green-dark;
+$btn-primary-color: $brand-green-dark;

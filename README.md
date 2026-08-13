@@ -1,11 +1,28 @@
+<!-- Absolute URL on purpose: this README is also the PyPI long_description, and PyPI does not resolve
+     repo-relative image paths. -->
+<p align="center">
+  <img src="https://raw.githubusercontent.com/huggingface/transformers-mlinter/main/docs/assets/images/mlinter-logo.png"
+       alt="mlinter" width="360">
+</p>
+
 # mlinter
 
-A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers) model integration files — `modeling_*.py`, `modular_*.py`, `configuration_*.py`, `processing_*.py`, `image_processing_*.py` and `video_processing_*.py` under `src/transformers/models/`, plus `test_tokenization_*.py` under `tests/models/`. It enforces structural conventions on every one of them.
+A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers) model
+integration files — `modeling_*.py`, `modular_*.py`, `configuration_*.py`, `processing_*.py`,
+`image_processing_*.py`, `video_processing_*.py` and `feature_extraction_*.py` under
+`src/transformers/models/`, plus `test_tokenization_*.py` under `tests/models/`. It enforces the
+structural conventions that keep hundreds of model implementations consistent with each other.
+
+**📖 Documentation: <https://huggingface.github.io/transformers-mlinter/>**
+
+The docs site is generated from `mlinter/rules.toml`, so its
+[rule reference](https://huggingface.github.io/transformers-mlinter/rules/) is always in step with the
+installed rules.
 
 ## Installation
 
 ```bash
-pip install git+https://github.com/huggingface/transformers-mlinter@main
+pip install transformers-mlinter
 ```
 
 When working on the transformers repo, mlinter is included in the `quality` extras:
@@ -14,88 +31,30 @@ When working on the transformers repo, mlinter is included in the `quality` extr
 pip install -e ".[quality]"
 ```
 
-## How rule registration works
-
-- Rule metadata lives in `mlinter/rules.toml`.
-- The TOML schema is versioned with a top-level `version = 1`. Custom files passed with `--rules-toml` must use the same schema version.
-- Executable TRF rules are auto-discovered from `trf*.py` modules in the `mlinter/` package.
-- Each module must define a `check(tree, file_path, source_lines) -> list[Violation]` function.
-- The module name determines the rule id: `trf003.py` → `TRF003`.
-- A `RULE_ID` module-level constant is set automatically by the discovery mechanism.
-- Every discovered rule must have a matching entry in the TOML file, and every TOML rule must have a matching module. Import-time validation fails if either side is missing.
-- Suppressions use `# trf-ignore: TRFXXX` on the same line or the line immediately above the flagged construct.
-- Some rules also accept a module-level `# trf-ignore: TRFXXX <subject>, ...` directive at column 0, which exempts only the named subjects for the whole file. `TRF041` uses it for config fields that gate the same branch in every model — `# trf-ignore: TRF041 problem_type, hidden_act` — so one comment replaces a dozen identical per-branch notes. Naming no subject keeps the directive per-line, so it never widens into a whole-file mute. Check the rule's entry in `mlinter/rules.toml` for whether it honours subjects.
-
-## How to add a new TRF rule
-
-The repo ships an `add-mlinter-rule` skill under `.ai/skills/` that walks an agent through duplicate detection, numbering, module creation, running against all models, and test scaffolding. Enable it for your agent of choice:
-
-```bash
-make claude   # symlinks .claude/skills -> .ai/skills (for Claude Code)
-make codex    # symlinks .agents/skills -> .ai/skills (for Codex)
-```
-
-After that, invoke it as `/add-mlinter-rule` in a new session. To add a rule manually:
-
-1. Add a `[rules.TRFXXX]` entry to `mlinter/rules.toml`.
-2. Fill in `description`, `default_enabled`, `explanation.what_it_does`, `explanation.why_bad`, and `explanation.diff`. Optional model-level exceptions go in `allowlist_models`.
-3. Create a new module `mlinter/trfXXX.py` with a `check(tree, file_path, source_lines) -> list[Violation]` function.
-4. Use the `RULE_ID` module constant instead of hardcoding `"TRFXXX"` inside the check.
-5. Add or update focused tests in `tests/`.
-
-## CLI usage
+## Quick start
 
 Run from the root of a transformers checkout:
 
 ```bash
-# Check all model integration files
-mlinter
-
-# Only check files changed against a git base ref
-mlinter --changed-only --base-ref origin/main
-
-# List all available TRF rules and their default state
-mlinter --list-rules
-
-# Use a custom rules TOML instead of the bundled mlinter/rules.toml
-mlinter --rules-toml /path/to/custom-rules.toml
-
-# Show the installed mlinter version
-mlinter --version
-
-# Show detailed documentation for one rule
-mlinter --rule TRF001
-
-# Enable additional rules on top of the defaults
-mlinter --enable-rules TRF003
-
-# Enable every TRF rule, including ones disabled by default
-mlinter --enable-all-trf-rules
-
-# Emit GitHub Actions error annotations
-mlinter --github-annotations
+mlinter                                     # check every model integration file
+mlinter --changed-only --base-ref origin/main   # only what you changed
+mlinter --list-rules                        # list rules and their default state
+mlinter --rule TRF001                       # explain one rule
 ```
 
-When installed from a git checkout or a `git+https://...` URL, `mlinter --version` includes a short commit hash suffix such as `1.2.3+g1a2b3c4`.
+See the [CLI reference](https://huggingface.github.io/transformers-mlinter/usage/) for every flag, the
+Python API, and cache locations.
 
-You can also invoke it as a Python module:
+## Documentation map
 
-```bash
-python -m mlinter
-```
-
-The lint cache is stored in the user cache directory instead of next to the installed package:
-`$XDG_CACHE_HOME/mlinter/.mlinter_cache.json` on Linux, `~/Library/Caches/mlinter/.mlinter_cache.json` on macOS, and `%LOCALAPPDATA%\mlinter\.mlinter_cache.json` on Windows.
-
-## Python API
-
-Import the supported Python API from the package root:
-
-```python
-from mlinter import TRF001, analyze_file, model_dir_name, render_rules_reference
-```
-
-`mlinter.mlinter` and `mlinter._helpers` are implementation modules and may change without a compatibility promise.
+| Page | What's there |
+|:-----|:-------------|
+| [Home](https://huggingface.github.io/transformers-mlinter/) | What mlinter checks and why, installation, how rule registration works |
+| [Rules](https://huggingface.github.io/transformers-mlinter/rules/) | All rules, filterable, one page each with examples and exemptions |
+| [CLI usage](https://huggingface.github.io/transformers-mlinter/usage/) | Every flag, output formats, cache, Python API |
+| [Suppressing rules](https://huggingface.github.io/transformers-mlinter/suppressing/) | `# trf-ignore`, whole-file directives, cutoff dates, allowlists |
+| [Contributing a rule](https://huggingface.github.io/transformers-mlinter/contributing/) | Adding a rule, the `add-mlinter-rule` skill, constraints on a rule |
+| [Releasing](https://huggingface.github.io/transformers-mlinter/release/) | The tag-driven release process |
 
 ## Development
 
@@ -105,12 +64,23 @@ cd transformers-mlinter
 pip install -e ".[dev]"
 ```
 
-Run the tests:
-
 ```bash
-pytest tests/
+make test        # pytest under tests/
+make lint        # ruff check + format --check
+make format      # auto-fix style
+make typecheck   # ty on mlinter/
 ```
 
-## Releasing
+### Building the docs site
 
-See [docs/release.md](docs/release.md) for the current release process.
+The rule pages are generated and git-ignored. Building needs the Ruby toolchain once:
+
+```bash
+cd docs && bundle install && cd ..
+make docs         # regenerate rule pages, build the site, check internal links
+make docs-serve   # live preview on http://localhost:4000/transformers-mlinter/
+```
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

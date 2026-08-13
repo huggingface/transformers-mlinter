@@ -14,3 +14,17 @@ venv/
 
 # Stray tool/MCP server logs
 *.log
+
+# macOS Finder metadata
+.DS_Store
+
+# Docs site build output, plus the pages scripts/build_docs.py derives from the repo on every build
+# (rule reference from rules.toml, changelog from CHANGELOG.md, version from pyproject.toml).
+# Committing them would only create drift.
+docs/_site/
+docs/.jekyll-cache/
+docs/.bundle/
+docs/vendor/
+docs/rules/
+docs/changelog.md
+docs/_data/

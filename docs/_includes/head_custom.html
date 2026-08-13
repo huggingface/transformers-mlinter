@@ -1,0 +1,13 @@
+{%- comment -%}
+  just-the-docs renders this inside <head> on every page.
+
+  Favicon: the theme's own _includes/favicon.html only wires up a `favicon.ico`, so the PNG icon is
+  declared here instead. It is the mark alone, cropped from the logo without the wordmark, because a
+  tab icon is far too small to render text.
+
+  Script: the rule-index filter, loaded with `defer` so it runs after the table exists. It exits
+  immediately on pages without one.
+{%- endcomment -%}
+<link rel="icon" type="image/png" href="{{ '/assets/images/mlinter-icon.png' | relative_url }}">
+<link rel="apple-touch-icon" href="{{ '/assets/images/mlinter-icon.png' | relative_url }}">
+<script src="{{ '/assets/js/rule-filter.js' | relative_url }}" defer></script>

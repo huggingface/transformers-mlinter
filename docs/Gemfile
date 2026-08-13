@@ -1,0 +1,26 @@
+source "https://rubygems.org"
+
+# Toolchain for the docs site in this directory, built by .github/workflows/pages.yml. The build is a
+# plain Jekyll run rather than GitHub's legacy Pages build, so the theme is not limited to the
+# github-pages gem set.
+gem "jekyll", "~> 4.3"
+
+# Sidebar nav + client-side search. Nav structure comes from page front matter (title / parent /
+# nav_order); the generated rule pages set theirs in scripts/build_rule_docs.py.
+gem "just-the-docs", "~> 0.10"
+
+group :jekyll_plugins do
+  # Load-bearing: rewrites relative *.md links to their rendered permalinks. The rule pages link to
+  # each other and to the hand-written pages by relative path so they also read correctly on
+  # github.com; this is what makes those same links work on the built site.
+  gem "jekyll-relative-links", "~> 0.7"
+end
+
+# Internal link checking in CI. The rule reference is generated, so a renamed page breaks links in 57
+# places at once and needs catching before deploy.
+gem "html-proofer", "~> 5.0"
+
+# No longer in Ruby 3.4's default gems.
+gem "csv"
+gem "base64"
+gem "bigdecimal"

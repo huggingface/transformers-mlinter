@@ -1,0 +1,120 @@
+name: Docs site
+
+# Builds and publishes the documentation site at
+# https://huggingface.github.io/transformers-mlinter/
+#
+# The rule reference is not committed: scripts/build_docs.py regenerates it from
+# mlinter/rules.toml on every build, so the site cannot document a rule that was renamed or removed.
+# That also means this workflow needs Python before Ruby.
+#
+# Pull requests build and link-check without deploying, which is what catches a rules.toml edit that
+# breaks the generator.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel an in-progress deploy — a half-published site is worse than a slightly stale one.
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # actions/configure-pages reads the live Pages config to derive base_path, which the default
+      # contents-only token cannot do. Read is enough — only the deploy job needs write.
+      pages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # The generator imports the package to read the validated rule specs, so an invalid rules.toml
+      # fails here rather than producing a wrong page.
+      - name: Generate the rule reference
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python scripts/build_docs.py
+
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b  # v1.321.0
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: docs
+
+      # Only present on push/dispatch; on a pull request there is no Pages deployment to configure.
+      - name: Configure Pages
+        id: pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d  # v6.0.0
+
+      # base_path comes from the live Pages config, so this stays correct if the site ever moves to a
+      # custom domain. On a pull request it is empty, and the baseurl in _config.yml is used instead —
+      # read from the config rather than repeated here so the two can never drift.
+      - name: Resolve baseurl
+        working-directory: docs
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: |
+          baseurl="$BASE_PATH"
+          if [ -z "$baseurl" ]; then
+            baseurl=$(bundle exec ruby -ryaml -e 'print YAML.load_file("_config.yml")["baseurl"].to_s')
+          fi
+          echo "BASEURL=$baseurl" >> "$GITHUB_ENV"
+          echo "Building with baseurl: '$baseurl'"
+
+      - name: Build
+        working-directory: docs
+        env:
+          JEKYLL_ENV: production
+        run: |
+          bundle exec jekyll build \
+            --baseurl "$BASEURL" \
+            --strict_front_matter \
+            --trace
+
+      # The failure mode this layout is most exposed to: pages cross-reference each other by relative
+      # .md path and jekyll-relative-links rewrites those at build time, so a renamed page breaks
+      # silently in the rendered HTML. The generated rule pages all link to ../suppressing.md, which
+      # means one rename breaks 57 pages at once. External links are not checked — they are
+      # rate-limited and flaky.
+      - name: Check internal links
+        working-directory: docs
+        run: |
+          bundle exec htmlproofer _site \
+            --disable-external \
+            --allow-hash-href \
+            --ignore-empty-alt \
+            --swap-urls "^${BASEURL}:"
+
+      - name: Upload artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
+        with:
+          path: docs/_site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128  # v5.0.0

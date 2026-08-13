@@ -65,8 +65,9 @@ description: Add a new TRF rule to the mlinter. Checks for duplicates, creates t
    ```
 
 8. Update documentation.
+   - No rule page to write: the docs site generates one per rule from `rules.toml` and `docs/rules/` is git-ignored, so never commit one. This makes `description`/`what_it_does`/`why_bad`/`diff` published prose — write them for someone reading a failed CI job. Preview: `make docs-rules`.
    - Add an entry under the `## [Unreleased]` section of `CHANGELOG.md` (create that section above the latest released version if it does not yet exist) describing the new rule. Mention any incidental changes shipped with it (e.g. expanding `MODELING_PATTERNS` to cover new file types), since those affect every rule.
-   - If the rule applies to file types not already documented in `README.md`, update the README accordingly.
+   - If the rule applies to file types not already documented, update the list in both `README.md` and `docs/index.md`.
 
 9. Final validation.
    ```bash
@@ -107,4 +108,6 @@ The base `PreTrainedConfig` does not define `tie_word_embeddings`. When a rule n
 - Rule config: `mlinter/rules.toml`
 - Helpers: `mlinter/_helpers.py`
 - Tests: `tests/test_mlinter.py`
-- README: `README.md`
+- README (repo front door + PyPI description): `README.md`
+- Docs site source: `docs/` — hand-written pages only; `docs/rules/` is generated and git-ignored
+- Rule page generator: `scripts/build_docs.py`

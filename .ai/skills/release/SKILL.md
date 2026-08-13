@@ -36,7 +36,7 @@ release bumps exactly one version field plus the CHANGELOG:
 
 Do NOT reintroduce hardcoded version strings elsewhere. `DEFAULT_BASE_VERSION` in
 `mlinter/_version.py` is a static `0.0.0` sentinel and must stay unbumped; the
-`README.md` example suffix and the `tests/test_mlinter.py` version pins use fixed
+`docs/usage.md` example suffix and the `tests/test_mlinter.py` version pins use fixed
 illustrative values (`1.2.3+g1a2b3c4`, `9.9.9`) decoupled from the real release.
 
 ## Workflow
@@ -46,8 +46,10 @@ illustrative values (`1.2.3+g1a2b3c4`, `9.9.9`) decoupled from the real release.
    greater than the latest tag (`git tag`).
 
 2. **Update `CHANGELOG.md`.** Add a `## [X.Y.Z] - YYYY-MM-DD` section (today's date)
-   above the previous release, following Keep a Changelog with `### Added` /
-   `### Fixed` / `### Changed` subsections. Summarize what landed since the last tag
+   above the previous release, using `### Added` (new TRF rules only, in rule-number
+   order) / `### Improved` (everything else that is not a bug fix) / `### Fixed`.
+   Keeping `Added` to rules alone is what makes it scannable — a release adds
+   dozens. Summarize what landed since the last tag
    — `git log vPREV..HEAD --oneline` is the source. Each new `TRFNNN` rule and any
    change to file-discovery globs gets an entry.
 

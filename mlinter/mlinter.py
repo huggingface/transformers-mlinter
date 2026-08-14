@@ -58,7 +58,8 @@ MODELING_PATTERNS = (
 # Test files a rule may target, discovered under TESTS_ROOT rather than MODELS_ROOT. Every rule gates on
 # the file name prefix, so widening discovery does not expose existing rules to these files.
 TEST_PATTERNS = ("test_tokenization_*.py",)
-FILE_PREFIXES = tuple(pattern.removesuffix("*.py") for pattern in MODELING_PATTERNS + TEST_PATTERNS)
+ALL_PATTERNS = MODELING_PATTERNS + TEST_PATTERNS
+FILE_PREFIXES = tuple(pattern.removesuffix("*.py") for pattern in ALL_PATTERNS)
 DEFAULT_RULE_SPECS_PATH = Path(__file__).with_name("rules.toml")
 RULE_SPECS_VERSION = 1
 _RULE_REGISTRY_GLOBALS = (
@@ -291,30 +292,72 @@ def _is_generated_file(path: Path) -> bool:
     return head is not None and GENERATED_FILE_MARKER in head
 
 
-def iter_modeling_files(paths: set[Path] | None = None):
-    if paths is None:
-        for root, patterns in ((MODELS_ROOT, MODELING_PATTERNS), (TESTS_ROOT, TEST_PATTERNS)):
-            for pattern in patterns:
-                for path in root.rglob(pattern):
-                    if not _is_generated_file(path):
-                        yield path
+def resolve_search_paths(paths: list[Path]) -> list[Path] | None:
+    """Validate the files/directories given on the command line, or None when none were given."""
+    if not paths:
+        return None
+    missing = [str(path) for path in paths if not path.exists()]
+    if missing:
+        raise ValueError(f"No such file or directory: {', '.join(missing)}")
+    return paths
+
+
+def _iter_pattern_matches(directory: Path, patterns: tuple[str, ...]):
+    for pattern in patterns:
+        yield from directory.rglob(pattern)
+
+
+def iter_modeling_files(paths: set[Path] | None = None, search_paths: list[Path] | None = None):
+    """Yield the files to lint, skipping files generated from a `modular_*.py` source.
+
+    `paths` short-circuits discovery with an already selected set (what `--changed-only` produces).
+    Otherwise files are discovered under `search_paths` when the caller gave any — any directory
+    holding model integration files, so a standalone model repo can be linted without mirroring the
+    transformers layout — and under the transformers roots relative to the current directory when not.
+    """
+    if paths is not None:
+        for path in sorted(paths):
+            if path.exists() and not _is_generated_file(path):
+                yield path
         return
 
-    for path in sorted(paths):
-        if path.exists() and not _is_generated_file(path):
-            yield path
+    if search_paths is not None:
+        candidates: set[Path] = set()
+        for search_path in search_paths:
+            # A file named explicitly is linted as given: rules gate on the file name themselves, so a
+            # path the patterns would not have matched simply runs no rules rather than being an error.
+            if search_path.is_dir():
+                candidates.update(_iter_pattern_matches(search_path, ALL_PATTERNS))
+            else:
+                candidates.add(search_path)
+        for path in sorted(candidates):
+            if not _is_generated_file(path):
+                yield path
+        return
+
+    for root, patterns in ((MODELS_ROOT, MODELING_PATTERNS), (TESTS_ROOT, TEST_PATTERNS)):
+        for path in _iter_pattern_matches(root, patterns):
+            if not _is_generated_file(path):
+                yield path
 
 
 def colored_error_message(file_path: str, line_number: int, message: str) -> str:
     return f"[bold red]{file_path}[/bold red]:[bold yellow]L{line_number}[/bold yellow]: {message}"
 
 
-def _is_modeling_candidate(path: Path) -> bool:
-    return (
-        path.suffix == ".py"
-        and path.name.startswith(FILE_PREFIXES)
-        and (MODELS_ROOT in path.parents or TESTS_ROOT in path.parents)
-    )
+def _path_is_within(path: Path, search_path: Path) -> bool:
+    """Whether `path` is `search_path` itself or lives under it."""
+    resolved_path = path.resolve()
+    resolved_search_path = search_path.resolve()
+    return resolved_path == resolved_search_path or resolved_search_path in resolved_path.parents
+
+
+def _is_modeling_candidate(path: Path, search_paths: list[Path] | None = None) -> bool:
+    if path.suffix != ".py" or not path.name.startswith(FILE_PREFIXES):
+        return False
+    if search_paths is not None:
+        return any(_path_is_within(path, search_path) for search_path in search_paths)
+    return MODELS_ROOT in path.parents or TESTS_ROOT in path.parents
 
 
 def _git_name_only(command: list[str]) -> list[str]:
@@ -337,14 +380,14 @@ def _git_worktree_changes() -> set[Path]:
     return {Path(path_str) for path_str in changed_paths}
 
 
-def get_changed_modeling_files(base_ref: str) -> set[Path]:
+def get_changed_modeling_files(base_ref: str, search_paths: list[Path] | None = None) -> set[Path]:
     changed_paths = _git_diff(base_ref, triple_dot=True)
     if not changed_paths:
         changed_paths = _git_diff(base_ref, triple_dot=False)
 
     filtered_paths: set[Path] = set()
     for path in {Path(path_str) for path_str in changed_paths}.union(_git_worktree_changes()):
-        if _is_modeling_candidate(path):
+        if _is_modeling_candidate(path, search_paths):
             filtered_paths.add(path)
     return filtered_paths
 
@@ -478,6 +521,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", action="version", version=f"mlinter {__version__}")
     parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        metavar="PATH",
+        help="Files or directories to check. A directory is searched recursively for model integration "
+        f"files ({', '.join(ALL_PATTERNS)}); a file is checked as given. Use this to lint a standalone "
+        "model repository, which does not mirror the transformers layout. Defaults to "
+        f"{MODELS_ROOT} and {TESTS_ROOT} relative to the current directory.",
+    )
+    parser.add_argument(
         "--rules-toml",
         type=Path,
         default=DEFAULT_RULE_SPECS_PATH,
@@ -597,6 +650,27 @@ def maybe_handle_rule_docs_cli(args: argparse.Namespace) -> bool:
     return False
 
 
+def warn_about_search_paths(search_paths: list[Path], modeling_files: list[Path], warn_when_empty: bool) -> None:
+    """Explain a run that checked nothing, so an empty run never reads as a clean one.
+
+    Every rule gates on the file name, so a file whose name carries none of the known prefixes runs no
+    rules at all and would otherwise be reported as `OK`. `warn_when_empty` is False under
+    `--changed-only`, where finding no file means nothing changed rather than nothing to check.
+    """
+    for search_path in search_paths:
+        if search_path.is_file() and not search_path.name.startswith(FILE_PREFIXES):
+            print(
+                f"Warning: {search_path} is not a model integration file "
+                f"({', '.join(ALL_PATTERNS)}), so no rule applies to it.",
+                file=sys.stderr,
+            )
+    if warn_when_empty and not modeling_files:
+        print(
+            f"Warning: no model integration file found in {', '.join(str(path) for path in search_paths)}.",
+            file=sys.stderr,
+        )
+
+
 def main() -> int:
     args = parse_args()
     previous_state = _rule_registry_snapshot()
@@ -612,9 +686,12 @@ def main() -> int:
 
         violations: list[Violation] = []
         enabled_rules = resolve_enabled_rules(args)
-        selected_paths = get_changed_modeling_files(args.base_ref) if args.changed_only else None
+        search_paths = resolve_search_paths(args.paths)
+        selected_paths = get_changed_modeling_files(args.base_ref, search_paths) if args.changed_only else None
 
-        modeling_files = list(iter_modeling_files(selected_paths))
+        modeling_files = list(iter_modeling_files(selected_paths, search_paths))
+        if search_paths is not None:
+            warn_about_search_paths(search_paths, modeling_files, warn_when_empty=selected_paths is None)
 
         show_progress = should_show_progress(args)
         status_ctx = (
@@ -631,7 +708,9 @@ def main() -> int:
             for file_path in modeling_files:
                 try:
                     text = file_path.read_text(encoding="utf-8")
-                    file_key = str(file_path)
+                    # Absolute: the cache is shared by every checkout, and a relative path such as
+                    # `modeling_llada.py` names a different file in each standalone model repo.
+                    file_key = str(file_path.resolve())
                     digest = _content_hash(text, enabled_rules, _find_companion_files(file_path))
 
                     if use_cache and cache.get(file_key) == digest:

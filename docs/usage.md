@@ -16,8 +16,9 @@ description: "Every mlinter command-line flag, the supported Python API, and whe
 
 ---
 
-mlinter resolves paths relative to the current directory, so run it from the root of a transformers
-checkout.
+With no path argument, mlinter resolves paths relative to the current directory, so run it from the
+root of a transformers checkout. Pass a path to check any other directory — see
+[Checking a standalone model repository](#checking-a-standalone-model-repository).
 
 ## Checking files
 
@@ -32,6 +33,37 @@ mlinter --changed-only --base-ref origin/main
 `--changed-only` is what CI uses on pull requests. It diffs against the base ref and lints only the
 matching files, which keeps a run proportional to the size of the change rather than the size of the
 library.
+
+## Checking a standalone model repository
+
+Model code shipped on the Hub with `trust_remote_code` lives in a flat repository rather than under
+`src/transformers/models/`, but it has to honour the same conventions: a model that skips `post_init`
+or hardcodes a dimension breaks `AutoModel.from_pretrained` in ways that are hard to trace back. Give
+mlinter the files or directories to check and it stops assuming the transformers layout:
+
+```bash
+# Check a cloned Hub model repository
+mlinter ~/models/LLaDA-8B-Instruct
+
+# Check one file, or several paths at once
+mlinter ~/models/LLaDA-8B-Instruct/modeling_llada.py
+mlinter src/transformers/models/llama tests/models/llama
+```
+
+A directory is searched recursively for model integration files (`modeling_*.py`, `modular_*.py`,
+`configuration_*.py`, `processing_*.py`, `image_processing_*.py`, `video_processing_*.py`,
+`feature_extraction_*.py`, `test_tokenization_*.py`); a file named explicitly is checked as given.
+Rules gate on the file name, so a file named something else — `model.py`, say — runs no rules, and
+mlinter says so rather than reporting a clean run. `--changed-only` composes with paths: it narrows
+the git diff to the paths you passed.
+
+Rules that resolve other models (a sibling `configuration_*.py`, a test file under `tests/models/`,
+another model's directory) find nothing outside a transformers checkout and stay quiet, as do
+per-model allowlists and cutoff dates, which are keyed on a `src/transformers/models/<model>/` path.
+Everything a single file can be judged on still applies.
+
+No transformers checkout is needed either way: the rules ship inside the package, so
+`pip install -U transformers-mlinter` is all it takes to check against the current rule set.
 
 ## Selecting rules
 

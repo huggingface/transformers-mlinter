@@ -42,6 +42,14 @@ mlinter --list-rules                        # list rules and their default state
 mlinter --rule TRF001                       # explain one rule
 ```
 
+Pass a path to check code that lives outside a transformers checkout — a model repository shipped on
+the Hub with `trust_remote_code`, for instance, which has to honour the same conventions:
+
+```bash
+mlinter ~/models/LLaDA-8B-Instruct          # a directory, searched recursively
+mlinter path/to/modeling_llada.py           # or a single file
+```
+
 See the [CLI reference](https://huggingface.github.io/transformers-mlinter/usage/) for every flag, the
 Python API, and cache locations.
 

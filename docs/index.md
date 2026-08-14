@@ -46,6 +46,10 @@ Every file under `src/transformers/models/` matching one of these patterns:
 
 plus `test_tokenization_*.py` under `tests/models/`.
 
+Those are the defaults. Pass a path and mlinter checks the files there instead, so model code that
+ships on the Hub with `trust_remote_code` — a flat repository, not a transformers checkout — is held to
+the same conventions. See [checking a standalone model repository](usage.md#checking-a-standalone-model-repository).
+
 The [rule reference](rules/index.md) lists every check, whether it runs by default, and which models
 are exempt from it.
 

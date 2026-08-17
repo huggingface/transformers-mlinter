@@ -59,6 +59,7 @@ from .mlinter import (
     parse_args,
     render_rules_reference,
     resolve_enabled_rules,
+    resolve_search_paths,
     should_show_progress,
 )
 from .mlinter import (
@@ -98,6 +99,7 @@ __all__ = [
     "parse_args",
     "render_rules_reference",
     "resolve_enabled_rules",
+    "resolve_search_paths",
     "should_show_progress",
 ]
 

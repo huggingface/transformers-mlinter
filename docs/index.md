@@ -44,7 +44,13 @@ Every file under `src/transformers/models/` matching one of these patterns:
 `modeling_*.py`, `modular_*.py`, `configuration_*.py`, `processing_*.py`, `image_processing_*.py`,
 `video_processing_*.py`, `feature_extraction_*.py`
 
-plus `test_tokenization_*.py` under `tests/models/`.
+plus `test_tokenization_*.py` under `tests/models/` — the only test files walked, since
+[TRF042](rules/trf042.md) is the only rule that reads one.
+
+Those are the defaults. Pass a path and mlinter checks the files there instead, whatever the layout:
+model code shipped on the Hub with `trust_remote_code` is a flat repository, a GitHub project may nest
+its model files anywhere, and either is held to the same conventions as long as the paths given hold the
+files to check. See [checking a repository outside transformers](usage.md#checking-a-repository-outside-transformers).
 
 The [rule reference](rules/index.md) lists every check, whether it runs by default, and which models
 are exempt from it.

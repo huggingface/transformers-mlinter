@@ -101,7 +101,12 @@ def _model_dir_name(file_path: Path) -> str | None:
 
 
 def _known_model_dirs() -> set[str]:
-    return {path.name for path in MODELS_ROOT.iterdir() if path.is_dir()}
+    # Empty outside a transformers checkout — e.g. when linting a standalone model repo, where the
+    # rules that resolve sibling models have nothing to resolve against.
+    try:
+        return {path.name for path in MODELS_ROOT.iterdir() if path.is_dir()}
+    except OSError:
+        return set()
 
 
 def model_contribution_date(file_path: Path) -> date | None:

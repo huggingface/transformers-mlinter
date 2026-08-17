@@ -17,6 +17,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   error. A rules TOML — including one passed with `--rules-toml` — that still describes a retired rule as
   active fails the run with exit code 2 and names the rule instead of silently linting nothing under that id.
   `.ai/skills/remove-mlinter-rule/` walks an agent through a removal.
+- `mlinter` now accepts files and directories to check as positional arguments, so a standalone model
+  repository — model code shipped on the Hub with `trust_remote_code`, which does not mirror
+  `src/transformers/models/<model>/` — can be linted without rearranging it into the transformers
+  layout. A directory is searched recursively for model integration files, a file named explicitly is
+  checked as given, and `--changed-only` narrows the git diff to the paths passed. With no path
+  argument, discovery is unchanged: `src/transformers/models` and `tests/models` relative to the
+  current directory. Rules that resolve other models (sibling configs, files under `tests/models/`,
+  other model directories) find nothing outside a transformers checkout and stay quiet, as do
+  per-model allowlists and cutoff dates. A run that matched no model integration file now says so
+  instead of reporting `OK`.
+
+### Changed
+
+- Lint cache entries are keyed on the absolute file path, so the same relative path in two different
+  model repositories no longer shares a cache entry. Existing entries are re-checked once.
 
 ### Removed
 

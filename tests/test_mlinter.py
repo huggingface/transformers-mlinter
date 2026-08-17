@@ -4096,6 +4096,122 @@ class FooTokenizationTest(BertTokenizationTest, unittest.TestCase):
         self.assertTrue(mlinter._is_modeling_candidate(Path("src/transformers/models/foo/modeling_foo.py")))
         self.assertFalse(mlinter._is_modeling_candidate(Path("tests/models/foo/test_modeling_foo.py")))
 
+    # --- Linting a standalone model repository (search paths) ---
+
+    @staticmethod
+    def _write_standalone_model_repo(root: Path) -> Path:
+        """A model repo laid out the way a Hub repository is: model files at the top level."""
+        repo = root / "llada"
+        repo.mkdir(parents=True)
+        (repo / "configuration_llada.py").write_text("class LladaConfig:\n    pass\n", encoding="utf-8")
+        (repo / "modeling_llada.py").write_text(
+            "class LladaPreTrainedModel(PreTrainedModel):\n"
+            "    pass\n"
+            "\n"
+            "class LladaModel(LladaPreTrainedModel):\n"
+            "    def __init__(self, config):\n"
+            "        super().__init__(config)\n",
+            encoding="utf-8",
+        )
+        (repo / "generation_utils.py").write_text("def generate():\n    pass\n", encoding="utf-8")
+        return repo
+
+    def test_search_paths_discover_model_files_outside_the_transformers_layout(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo = self._write_standalone_model_repo(Path(tmp_dir))
+            found = {path.name for path in mlinter.iter_modeling_files(search_paths=[repo])}
+        self.assertEqual(found, {"configuration_llada.py", "modeling_llada.py"})
+
+    def test_search_paths_skip_generated_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo = Path(tmp_dir)
+            generated = repo / "modeling_foo.py"
+            generated.write_text(
+                f"# {_helpers_mod.GENERATED_FILE_MARKER} modular_foo.py\nclass FooModel: ...\n", encoding="utf-8"
+            )
+            (repo / "modular_foo.py").write_text("class FooModel: ...\n", encoding="utf-8")
+            found = {path.name for path in mlinter.iter_modeling_files(search_paths=[repo])}
+        self.assertEqual(found, {"modular_foo.py"})
+
+    def test_search_paths_accept_an_explicit_file(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo = self._write_standalone_model_repo(Path(tmp_dir))
+            target = repo / "modeling_llada.py"
+            found = list(mlinter.iter_modeling_files(search_paths=[target]))
+        self.assertEqual(found, [target])
+
+    def test_resolve_search_paths_rejects_a_missing_path(self):
+        self.assertIsNone(mlinter.resolve_search_paths([]))
+        with self.assertRaises(ValueError) as exc:
+            mlinter.resolve_search_paths([Path("/nonexistent/model/repo")])
+        self.assertIn("/nonexistent/model/repo", str(exc.exception))
+
+    def test_changed_only_candidate_honours_search_paths(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo = self._write_standalone_model_repo(Path(tmp_dir))
+            self.assertTrue(mlinter._is_modeling_candidate(repo / "modeling_llada.py", [repo]))
+            self.assertFalse(mlinter._is_modeling_candidate(repo / "generation_utils.py", [repo]))
+            self.assertFalse(
+                mlinter._is_modeling_candidate(Path("src/transformers/models/foo/modeling_foo.py"), [repo])
+            )
+
+    def test_main_lints_a_standalone_model_directory(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo = self._write_standalone_model_repo(Path(tmp_dir))
+            stdout, stderr = StringIO(), StringIO()
+            with (
+                patch.object(
+                    mlinter.sys,
+                    "argv",
+                    ["mlinter", str(repo), "--no-cache", "--no-progress", "--enable-rules", "TRF013"],
+                ),
+                redirect_stdout(stdout),
+                redirect_stderr(stderr),
+            ):
+                exit_code = mlinter.main()
+
+        self.assertEqual(exit_code, 1)
+        # The missing `post_init` call is exactly the kind of bug a Hub model repo silently ships.
+        self.assertIn("does not call `self.post_init`", stderr.getvalue().replace("\n", ""))
+
+    def test_main_warns_when_a_search_path_holds_no_model_file(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            stdout, stderr = StringIO(), StringIO()
+            with (
+                patch.object(mlinter.sys, "argv", ["mlinter", tmp_dir, "--no-cache", "--no-progress"]),
+                redirect_stdout(stdout),
+                redirect_stderr(stderr),
+            ):
+                exit_code = mlinter.main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("no model integration file found", stderr.getvalue().replace("\n", ""))
+
+    def test_no_empty_warning_under_changed_only(self):
+        stderr = StringIO()
+        with redirect_stderr(stderr):
+            mlinter.warn_about_search_paths([Path("/models/llada")], [], warn_when_empty=False)
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_main_warns_about_an_explicit_file_no_rule_applies_to(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            unrelated = Path(tmp_dir) / "model.py"
+            unrelated.write_text("class LladaModel:\n    pass\n", encoding="utf-8")
+            stdout, stderr = StringIO(), StringIO()
+            with (
+                patch.object(mlinter.sys, "argv", ["mlinter", str(unrelated), "--no-cache", "--no-progress"]),
+                redirect_stdout(stdout),
+                redirect_stderr(stderr),
+            ):
+                exit_code = mlinter.main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("is not a model integration file", stderr.getvalue().replace("\n", ""))
+
+    def test_known_model_dirs_is_empty_outside_a_transformers_checkout(self):
+        with patch.object(_helpers_mod, "MODELS_ROOT", Path("/nonexistent/src/transformers/models")):
+            self.assertEqual(_helpers_mod._known_model_dirs(), set())
+
     # --- TRF043: Attention classes must not declare position_ids in forward ---
 
     def test_trf043_flags_position_ids_in_attention_forward(self):

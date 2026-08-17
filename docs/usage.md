@@ -56,8 +56,11 @@ A directory is searched recursively for model integration files (`modeling_*.py`
 Since the search is recursive and takes several paths at once, the layout does not matter: a GitHub
 project that keeps its model files in some directory of its own is checked by naming that directory,
 or by naming each one when they are scattered. Rules gate on the file name, so a file named something
-else — `model.py`, say — runs no rules, and mlinter says so rather than reporting a clean run.
-`--changed-only` composes with paths: it narrows the git diff to the paths you passed.
+else — `model.py`, say — runs no rules, and mlinter says so rather than reporting a clean run. A path
+that does not exist is an error: the run stops with exit code 2 and names it, rather than quietly
+checking the rest. Files generated from a `modular_*.py` source are skipped here as they are in a
+checkout, so the modular file is the one reported on. `--changed-only` composes with paths: it narrows
+the git diff to the paths you passed.
 
 `test_tokenization_*.py` is the only test file discovered, in a checkout or out of one: [TRF042](rules/trf042.md)
 is the only rule that reads a test file. `test_modeling_*.py` and `test_processing_*.py` are walked
@@ -158,6 +161,10 @@ A file is skipped when its content hash, the set of enabled rules, the hash of t
 contents of any companion `configuration_*.py` all match the cached entry. Editing a config file
 therefore re-checks the modeling files that read it.
 
+One cache serves every repository you check, so entries are keyed on the absolute path: two model
+repositories that each hold a `modeling_llada.py` get an entry apiece rather than one shadowing the
+other.
+
 Disable the cache with `--no-cache`.
 
 ## Python API
@@ -167,6 +174,22 @@ Import the supported API from the package root:
 ```python
 from mlinter import TRF001, analyze_file, model_dir_name, render_rules_reference
 ```
+
+File discovery is part of that API, so a tool that lints a repository of its own does not have to
+reimplement the patterns:
+
+```python
+from pathlib import Path
+
+from mlinter import analyze_file, iter_modeling_files
+
+for path in iter_modeling_files(search_paths=[Path("~/models/LLaDA-8B-Instruct").expanduser()]):
+    violations = analyze_file(path, path.read_text(encoding="utf-8"))
+```
+
+`search_paths` takes the same files and directories as the command line; without it, discovery walks
+`src/transformers/models` and `tests/models` relative to the current directory. `resolve_search_paths`
+validates a list of paths the way the CLI does, raising `ValueError` naming any that do not exist.
 
 `mlinter.mlinter` and `mlinter._helpers` are implementation modules and may change without a
 compatibility promise.

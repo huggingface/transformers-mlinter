@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a new transformers-mlinter release. Bumps the version across all pinned locations, updates the CHANGELOG, runs local checks and a packaged smoke test, then drives the tag-based GitHub Actions publish to PyPI. Use when asked to release, cut a version, or ship X.Y.Z.
+description: Cut a new transformers-mlinter release. Bumps the version across all pinned locations, updates the CHANGELOG, runs local checks and a packaged smoke test, drives the tag-based GitHub Actions publish to PyPI, then opens the next development version on main. Use when asked to release, cut a version, or ship X.Y.Z.
 ---
 
 # Release transformers-mlinter
@@ -116,9 +116,34 @@ illustrative values (`1.2.3+g1a2b3c4`, `9.9.9`) decoupled from the real release.
    mlinter --version
    ```
 
+10. **Open the next development version.** With `X.Y.Z` published, move `main` off the
+    released version so subsequent commits are not attributed to a version already on
+    PyPI. Default to the next patch, `X.Y.(Z+1)`, unless the user names a different
+    target. Two edits:
+    - `pyproject.toml` — set `[project].version` to the next version
+    - `CHANGELOG.md` — add a bare `## [Unreleased]` heading above the section just
+      released, with no subsections; the next change adds its own `### Added` /
+      `### Improved` / `### Fixed`
+
+    This lands on `main` through a branch, not a direct push:
+    ```bash
+    git switch main && git pull
+    git switch -c start-NEXT
+    # edit pyproject.toml and CHANGELOG.md
+    git add pyproject.toml CHANGELOG.md
+    git commit -m "Starting version NEXT"
+    git push -u origin start-NEXT
+    gh pr create --title "Starting version NEXT" --body "Post-release bump after X.Y.Z."
+    gh pr merge --squash --delete-branch
+    ```
+    The squash keeps `Starting version NEXT` as the commit subject on `main`. Do not tag
+    this commit and do not merge it into `vX.Y-release` — the release branch stays at the
+    released version.
+
 ## Notes
 
-- No `.dev0` post-release bump is used; releasing is a single bump + tag.
+- No `.dev0` suffix is used. Releasing is a single bump + tag; the step 10 post-release
+  bump sets `main` to the next plain `X.Y.Z`.
 - First-ever PyPI publish requires a pending trusted publisher configured on PyPI
   pointing at `release.yml` with environment `pypi-release` — see `docs/release.md`.
 - Optional TestPyPI dry run is documented in `docs/release.md` and is manual.

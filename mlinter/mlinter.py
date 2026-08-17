@@ -67,6 +67,7 @@ _RULE_REGISTRY_GLOBALS = (
     "TRF_RULE_SPECS",
     "TRF_RULES",
     "DEFAULT_ENABLED_TRF_RULES",
+    "DEPRECATED_TRF_RULES",
     "TRF_MODEL_DIR_ALLOWLISTS",
     "TRF_RULE_CHECKS",
 )
@@ -75,11 +76,26 @@ RULE_SPECS_HASH = ""
 TRF_RULE_SPECS: dict[str, dict[str, object]] = {}
 TRF_RULES: dict[str, str] = {}
 DEFAULT_ENABLED_TRF_RULES: set[str] = set()
+DEPRECATED_TRF_RULES: frozenset[str] = frozenset()
 TRF_MODEL_DIR_ALLOWLISTS: dict[str, set[str]] = {}
 TRF_RULE_CHECKS: dict[str, Callable[[ast.Module, Path, list[str]], list[Violation]]] = {}
 
 
-def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], str]:
+def _read_deprecated_rule_ids(rule_specs_path: Path) -> frozenset[str]:
+    """Rule ids a spec file marks with ``deprecated = true``.
+
+    Read separately from :func:`_load_rule_specs` so the bundled file can be consulted as the
+    authority on what has been retired, even when the CLI is pointed at a different TOML.
+    """
+    rules = tomllib.loads(rule_specs_path.read_text(encoding="utf-8")).get("rules")
+    if not isinstance(rules, dict):
+        return frozenset()
+    return frozenset(
+        rule_id for rule_id, spec in rules.items() if isinstance(spec, dict) and spec.get("deprecated") is True
+    )
+
+
+def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], frozenset[str], str]:
     raw_text = rule_specs_path.read_text(encoding="utf-8")
     data = tomllib.loads(raw_text)
     version = data.get("version")
@@ -91,11 +107,40 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], str]:
     if not isinstance(rules, dict):
         raise ValueError(f"Invalid rule spec file: missing [rules] table in {rule_specs_path}")
 
+    # A retired rule has no code left, so a spec file that still describes it as a live rule would
+    # silently lint nothing under that id. Fail loudly instead and name the fix.
+    stale_rule_ids = sorted(
+        rule_id
+        for rule_id in BUNDLED_DEPRECATED_TRF_RULES
+        if isinstance(rules.get(rule_id), dict) and rules[rule_id].get("deprecated") is not True
+    )
+    if stale_rule_ids:
+        raise ValueError(
+            f"Deprecated rule(s) still active in {rule_specs_path}: {', '.join(stale_rule_ids)}. "
+            "These rules were removed from mlinter: drop their rule tables from the file, or mark each "
+            "with `deprecated = true` and no `default_enabled`."
+        )
+
     required_explanation_keys = {"what_it_does", "why_bad", "diff"}
     specs: dict[str, dict] = {}
+    deprecated: set[str] = set()
     for rule_id, spec in rules.items():
         if not isinstance(spec, dict):
             raise ValueError(f"Invalid rule spec for {rule_id}: expected table")
+
+        is_deprecated = spec.get("deprecated", False)
+        if not isinstance(is_deprecated, bool):
+            raise ValueError(f"Invalid rule spec for {rule_id}: deprecated must be bool")
+        if is_deprecated:
+            # Deprecated rules keep only a tombstone: enough to explain the error, no live metadata.
+            if spec.get("default_enabled") is True:
+                raise ValueError(
+                    f"Invalid rule spec for {rule_id}: deprecated rules cannot be enabled, "
+                    "drop `default_enabled = true`"
+                )
+            deprecated.add(rule_id)
+            continue
+
         description = spec.get("description")
         default_enabled = spec.get("default_enabled")
         explanation = spec.get("explanation")
@@ -133,8 +178,12 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], str]:
             "cutoff_date": cutoff_date,
         }
 
-    return specs, hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    return specs, frozenset(deprecated), hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
 
+
+# The bundled file is the authority on which rule ids have been retired: a project pointing
+# `--rules-toml` at its own copy must not be able to resurrect a rule whose code is gone.
+BUNDLED_DEPRECATED_TRF_RULES = _read_deprecated_rule_ids(DEFAULT_RULE_SPECS_PATH)
 
 CONSOLE = Console(stderr=True)
 CACHE_FILENAME = ".mlinter_cache.json"
@@ -215,6 +264,9 @@ def _save_cache(cache: dict[str, str]) -> None:
 
 
 def _validate_rule_ids(rule_ids: set[str]) -> set[str]:
+    deprecated = sorted(rule_id for rule_id in rule_ids if rule_id in DEPRECATED_TRF_RULES)
+    if deprecated:
+        raise ValueError(f"Deprecated rule id(s): {', '.join(deprecated)}. These rules were removed from mlinter.")
     unknown = sorted(rule_id for rule_id in rule_ids if rule_id not in TRF_RULES)
     if unknown:
         raise ValueError(f"Unknown rule id(s): {', '.join(unknown)}. Valid rules: {', '.join(sorted(TRF_RULES))}")
@@ -300,7 +352,7 @@ def get_changed_modeling_files(base_ref: str) -> set[Path]:
 CheckFn = Callable[[ast.Module, Path, list[str]], list[Violation]]
 
 
-def _build_rule_checks(rule_specs: dict[str, dict]) -> dict[str, CheckFn]:
+def _build_rule_checks(rule_specs: dict[str, dict], deprecated_rules: frozenset[str]) -> dict[str, CheckFn]:
     """Auto-discover check() functions from trf*.py modules in this package."""
     checks: dict[str, CheckFn] = {}
     package_dir = Path(__file__).parent
@@ -309,6 +361,8 @@ def _build_rule_checks(rule_specs: dict[str, dict]) -> dict[str, CheckFn]:
         rule_id = _rule_id_from_module_name(module_name)
         if rule_id is None:
             continue
+        if rule_id in deprecated_rules:
+            raise ValueError(f"Rule {rule_id} is marked deprecated but {module_name}.py still exists; delete it.")
         if rule_id not in rule_specs:
             raise ValueError(f"Missing rule spec for discovered module {module_name} ({rule_id}).")
         mod = importlib.import_module(f".{module_name}", package=__package__)
@@ -344,17 +398,19 @@ def _rule_registry_snapshot() -> dict[str, object]:
 
 
 def _activate_rule_registry(rule_specs_path: Path) -> None:
-    rule_specs, rules_hash = _load_rule_specs(rule_specs_path)
+    rule_specs, deprecated_rules, rules_hash = _load_rule_specs(rule_specs_path)
+    deprecated_rules = deprecated_rules | BUNDLED_DEPRECATED_TRF_RULES
     rule_state = {
         "ACTIVE_RULE_SPECS_PATH": rule_specs_path,
         "RULE_SPECS_HASH": rules_hash,
         "TRF_RULE_SPECS": rule_specs,
         "TRF_RULES": {rule_id: spec["description"] for rule_id, spec in rule_specs.items()},
         "DEFAULT_ENABLED_TRF_RULES": {rule_id for rule_id, spec in rule_specs.items() if spec["default_enabled"]},
+        "DEPRECATED_TRF_RULES": deprecated_rules,
         "TRF_MODEL_DIR_ALLOWLISTS": {
             rule_id: spec["allowlist_models"] for rule_id, spec in rule_specs.items() if spec["allowlist_models"]
         },
-        "TRF_RULE_CHECKS": _build_rule_checks(rule_specs),
+        "TRF_RULE_CHECKS": _build_rule_checks(rule_specs, deprecated_rules),
     }
     globals().update(rule_state)
     _refresh_rule_id_globals()

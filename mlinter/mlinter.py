@@ -55,8 +55,10 @@ MODELING_PATTERNS = (
     "processing_*.py",
     "feature_extraction_*.py",
 )
-# Test files a rule may target, discovered under TESTS_ROOT rather than MODELS_ROOT. Every rule gates on
-# the file name prefix, so widening discovery does not expose existing rules to these files.
+# Test files a rule may target, discovered under TESTS_ROOT rather than MODELS_ROOT. Only tokenization
+# tests are walked because TRF042 is the only rule that looks at a test file; `test_modeling_*.py` and
+# `test_processing_*.py` belong here as soon as a rule targets them. Every rule gates on the file name
+# prefix, so widening discovery does not expose existing rules to the files it adds.
 TEST_PATTERNS = ("test_tokenization_*.py",)
 ALL_PATTERNS = MODELING_PATTERNS + TEST_PATTERNS
 FILE_PREFIXES = tuple(pattern.removesuffix("*.py") for pattern in ALL_PATTERNS)
@@ -307,16 +309,17 @@ def _iter_pattern_matches(directory: Path, patterns: tuple[str, ...]):
         yield from directory.rglob(pattern)
 
 
-def iter_modeling_files(paths: set[Path] | None = None, search_paths: list[Path] | None = None):
+def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: list[Path] | None = None):
     """Yield the files to lint, skipping files generated from a `modular_*.py` source.
 
-    `paths` short-circuits discovery with an already selected set (what `--changed-only` produces).
-    Otherwise files are discovered under `search_paths` when the caller gave any — any directory
-    holding model integration files, so a standalone model repo can be linted without mirroring the
-    transformers layout — and under the transformers roots relative to the current directory when not.
+    `selected_paths` short-circuits discovery with an already chosen set (what `--changed-only`
+    produces). Otherwise files are discovered under `search_paths` when the caller gave any — any
+    directory holding model integration files, so a standalone model repo can be linted without
+    mirroring the transformers layout — and under the transformers roots relative to the current
+    directory when not.
     """
-    if paths is not None:
-        for path in sorted(paths):
+    if selected_paths is not None:
+        for path in sorted(selected_paths):
             if path.exists() and not _is_generated_file(path):
                 yield path
         return
@@ -345,19 +348,24 @@ def colored_error_message(file_path: str, line_number: int, message: str) -> str
     return f"[bold red]{file_path}[/bold red]:[bold yellow]L{line_number}[/bold yellow]: {message}"
 
 
-def _path_is_within(path: Path, search_path: Path) -> bool:
-    """Whether `path` is `search_path` itself or lives under it."""
-    resolved_path = path.resolve()
+def _path_is_within(file_path: Path, search_path: Path) -> bool:
+    """Whether `file_path` is the searched path itself or lives under it."""
+    resolved_file_path = file_path.resolve()
     resolved_search_path = search_path.resolve()
-    return resolved_path == resolved_search_path or resolved_search_path in resolved_path.parents
+    return resolved_file_path == resolved_search_path or resolved_search_path in resolved_file_path.parents
 
 
-def _is_modeling_candidate(path: Path, search_paths: list[Path] | None = None) -> bool:
-    if path.suffix != ".py" or not path.name.startswith(FILE_PREFIXES):
+def _is_modeling_candidate(file_path: Path, search_paths: list[Path] | None = None) -> bool:
+    """Whether `file_path` is a file this run should lint.
+
+    `search_paths` are the files and directories asked for on the command line; without them a
+    candidate is anything under the transformers roots.
+    """
+    if file_path.suffix != ".py" or not file_path.name.startswith(FILE_PREFIXES):
         return False
     if search_paths is not None:
-        return any(_path_is_within(path, search_path) for search_path in search_paths)
-    return MODELS_ROOT in path.parents or TESTS_ROOT in path.parents
+        return any(_path_is_within(file_path, search_path) for search_path in search_paths)
+    return MODELS_ROOT in file_path.parents or TESTS_ROOT in file_path.parents
 
 
 def _git_name_only(command: list[str]) -> list[str]:

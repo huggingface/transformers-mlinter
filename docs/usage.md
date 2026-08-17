@@ -18,7 +18,7 @@ description: "Every mlinter command-line flag, the supported Python API, and whe
 
 With no path argument, mlinter resolves paths relative to the current directory, so run it from the
 root of a transformers checkout. Pass a path to check any other directory — see
-[Checking a standalone model repository](#checking-a-standalone-model-repository).
+[Checking a repository outside transformers](#checking-a-repository-outside-transformers).
 
 ## Checking files
 
@@ -34,7 +34,7 @@ mlinter --changed-only --base-ref origin/main
 matching files, which keeps a run proportional to the size of the change rather than the size of the
 library.
 
-## Checking a standalone model repository
+## Checking a repository outside transformers
 
 Model code shipped on the Hub with `trust_remote_code` lives in a flat repository rather than under
 `src/transformers/models/`, but it has to honour the same conventions: a model that skips `post_init`
@@ -53,9 +53,15 @@ mlinter src/transformers/models/llama tests/models/llama
 A directory is searched recursively for model integration files (`modeling_*.py`, `modular_*.py`,
 `configuration_*.py`, `processing_*.py`, `image_processing_*.py`, `video_processing_*.py`,
 `feature_extraction_*.py`, `test_tokenization_*.py`); a file named explicitly is checked as given.
-Rules gate on the file name, so a file named something else — `model.py`, say — runs no rules, and
-mlinter says so rather than reporting a clean run. `--changed-only` composes with paths: it narrows
-the git diff to the paths you passed.
+Since the search is recursive and takes several paths at once, the layout does not matter: a GitHub
+project that keeps its model files in some directory of its own is checked by naming that directory,
+or by naming each one when they are scattered. Rules gate on the file name, so a file named something
+else — `model.py`, say — runs no rules, and mlinter says so rather than reporting a clean run.
+`--changed-only` composes with paths: it narrows the git diff to the paths you passed.
+
+`test_tokenization_*.py` is the only test file discovered, in a checkout or out of one: [TRF042](rules/trf042.md)
+is the only rule that reads a test file. `test_modeling_*.py` and `test_processing_*.py` are walked
+once a rule targets them.
 
 Rules that resolve other models (a sibling `configuration_*.py`, a test file under `tests/models/`,
 another model's directory) find nothing outside a transformers checkout and stay quiet, as do

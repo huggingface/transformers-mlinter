@@ -20,8 +20,11 @@ tree, CI configs, and copies of `rules.toml` passed via `--rules-toml`. So a rem
 entry in `rules.toml` instead of deleting the table:
 
 - The engine drops a deprecated id from `TRF_RULES`, `TRF_RULE_SPECS`, `TRF_RULE_CHECKS`,
-  `DEFAULT_ENABLED_TRF_RULES`, the `mlinter.TRFXXX` public constants, `--list-rules`, and the generated
-  docs. Projects that still suppress or configure the id are silently unaffected.
+  `DEFAULT_ENABLED_TRF_RULES`, the `mlinter.TRFXXX` public constants, and `--list-rules`. Projects that
+  still suppress or configure the id are silently unaffected.
+- The docs site is the exception: it keeps publishing a page for the id, built from the tombstone and
+  listed under `Removed rules` on the rule index. A number that used to fire has to stay findable by
+  whoever meets it in an old CI log.
 - Asking for it explicitly (`--enable-rules TRFXXX`, `--rule TRFXXX`) fails with exit code 2.
 - A rules TOML that still lists the id as an active rule fails the whole run with exit code 2. The
   bundled `rules.toml` is the authority here, so this holds for custom files too.
@@ -49,8 +52,9 @@ the next number after the highest `trf*.py`.
      deprecated = true
      description = "Removed in <version>: <one-line reason>."
      ```
-   - `<version>` is the version under development in `pyproject.toml`. The description is not published
-     anywhere, but it is what the next contributor reads when they wonder where the rule went.
+   - `<version>` is the version under development in `pyproject.toml`. The description **is** published:
+     it is the whole of the retired rule's docs page and its row in the `Removed rules` table, so write
+     it for someone who just hit the id in a CI log, not as an internal note.
 
 3. Delete the rule module.
    ```bash
@@ -86,8 +90,9 @@ the next number after the highest `trf*.py`.
    python -m mlinter --rule TRFXXX                # must exit 2 and say the rule is deprecated
    python -m mlinter --enable-all-trf-rules       # must not error on the missing module
    ```
-   - `make docs-rules` if the docs toolchain is available, to confirm the page generator no longer emits a
-     page for the id.
+   - `make docs-rules` if the docs toolchain is available, to confirm the generator emits a `Removed`
+     page for the id and lists it under `Removed rules` on the index — not a live rule page, and not
+     nothing at all.
 
 7. Report.
    - The tombstone, the deleted files, the CHANGELOG entry, and what a consumer of mlinter has to do

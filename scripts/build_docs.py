@@ -19,6 +19,8 @@ Three outputs, all git-ignored and rebuilt by ``make docs`` and by the Pages wor
 the single source of truth and the site can never document something that no longer exists:
 
 * ``docs/rules/`` — the searchable rule index plus one page per rule, from ``mlinter/rules.toml``.
+  Retired rules keep a page too: a `TRFNNN` in an old CI log or an old `# trf-ignore` comment has to
+  stay findable, and a 404 does not tell the reader the rule is gone rather than mistyped.
 * ``docs/changelog.md`` — the root ``CHANGELOG.md`` with site front matter prepended.
 * ``docs/_data/mlinter.yml`` — the released version, for pages to display.
 
@@ -198,7 +200,57 @@ def render_rule_page(rule_id: str, spec: dict[str, object], nav_order: int) -> s
     return "\n".join(lines)
 
 
-def render_index_page(specs: dict[str, dict[str, object]]) -> str:
+def render_deprecated_rule_page(rule_id: str, spec: dict[str, object], nav_order: int) -> str:
+    """The page a retired rule keeps: why it went, and what it means for a project that still names it.
+
+    Deliberately not the live layout — there is no source module to link, no scope, and no example to
+    show, and offering `mlinter --rule TRFNNN` would be advertising a command that now exits 2.
+    """
+    description = cast(str, spec["description"])
+
+    return "\n".join(
+        [
+            "---",
+            "layout: default",
+            f"title: {rule_id}",
+            "parent: Rules",
+            f"nav_order: {nav_order}",
+            f"description: {yaml_double_quoted(description)}",
+            "---",
+            "",
+            GENERATED_BANNER,
+            "",
+            f"# {rule_id}",
+            "{: .no_toc }",
+            "",
+            md_escape(description),
+            "{: .fs-5 .fw-300 }",
+            "",
+            "{: .warning }",
+            f"> {rule_id} has been removed from mlinter and never runs. It is absent from "
+            f"`mlinter --list-rules`, and asking for it (`mlinter --enable-rules {rule_id}`, "
+            f"`mlinter --rule {rule_id}`) exits with an error. The number is retired and is never reused.",
+            "",
+            "| | |",
+            "|---|---|",
+            "| **Status** | Removed |",
+            "| **Source** | Module deleted — see the [changelog](../changelog.md) |",
+            "{: .rule-meta }",
+            "",
+            "## What this means for your project",
+            "",
+            f"Nothing to clean up on the linted side: a leftover `# trf-ignore: {rule_id}` comment is "
+            "harmless, because mlinter no longer recognises the id at all.",
+            "",
+            f"A project that ships its own rules TOML must mark `[rules.{rule_id}]` with "
+            "`deprecated = true` or drop the table entirely. Leaving it described as an active rule "
+            "fails the run with exit code 2, rather than silently linting nothing under that id.",
+            "",
+        ]
+    )
+
+
+def render_index_page(specs: dict[str, dict[str, object]], deprecated_specs: dict[str, dict[str, object]]) -> str:
     total = len(specs)
     enabled = sum(1 for spec in specs.values() if spec["default_enabled"])
 
@@ -249,6 +301,33 @@ def render_index_page(specs: dict[str, dict[str, object]]) -> str:
         "{: .rule-table #rule-table }",
         "",
     ]
+
+    # Retired rules get their own table rather than a row in the main one: they are not part of the
+    # "N rules" the filter box counts, but a reader who arrived from an old CI log still needs to find
+    # out what happened to the number.
+    if deprecated_specs:
+        one = len(deprecated_specs) == 1
+        subject = "rule has" if one else "rules have"
+        lines += [
+            "## Removed rules",
+            "",
+            f"{len(deprecated_specs)} {subject} been retired. "
+            f"{'It no longer runs' if one else 'They no longer run'}, "
+            f"{'it is' if one else 'they are'} not included in the count above, and "
+            f"{'its number is' if one else 'their numbers are'} never reused. A leftover "
+            "`# trf-ignore` comment naming one is harmless.",
+            "",
+            "| Code | Why it was removed |",
+            "|:-----|:-------------------|",
+        ]
+        for rule_id in sorted(deprecated_specs):
+            description = cast(str, deprecated_specs[rule_id]["description"])
+            lines.append(f"| [{rule_id}]({rule_id.lower()}.md) | {md_escape(description, in_table=True)} |")
+        lines += [
+            "{: .rule-table }",
+            "",
+        ]
+
     return "\n".join(lines)
 
 
@@ -289,8 +368,9 @@ def render_changelog_page() -> str:
     return f"{front_matter}{body}"
 
 
-def build(output_dir: Path) -> int:
+def build(output_dir: Path) -> tuple[int, int]:
     specs = mlinter.TRF_RULE_SPECS
+    deprecated_specs = mlinter.DEPRECATED_TRF_RULE_SPECS
     if not specs:
         raise SystemExit("No rules found in mlinter.TRF_RULE_SPECS — refusing to write an empty reference.")
 
@@ -300,9 +380,14 @@ def build(output_dir: Path) -> int:
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
 
-    (output_dir / "index.md").write_text(render_index_page(specs) + "\n", encoding="utf-8")
-    for nav_order, rule_id in enumerate(sorted(specs), start=1):
-        page = render_rule_page(rule_id, specs[rule_id], nav_order)
+    (output_dir / "index.md").write_text(render_index_page(specs, deprecated_specs) + "\n", encoding="utf-8")
+    # One nav_order sequence over live and retired rules together, so the sidebar stays in rule-number
+    # order and a retired rule sits where a reader expects it rather than in a pile at the end.
+    for nav_order, rule_id in enumerate(sorted(specs | deprecated_specs), start=1):
+        if rule_id in deprecated_specs:
+            page = render_deprecated_rule_page(rule_id, deprecated_specs[rule_id], nav_order)
+        else:
+            page = render_rule_page(rule_id, specs[rule_id], nav_order)
         (output_dir / f"{rule_id.lower()}.md").write_text(page + "\n", encoding="utf-8")
 
     (DOCS_DIR / "changelog.md").write_text(render_changelog_page(), encoding="utf-8")
@@ -318,7 +403,7 @@ def build(output_dir: Path) -> int:
         encoding="utf-8",
     )
 
-    return len(specs)
+    return len(specs), len(deprecated_specs)
 
 
 def main() -> int:
@@ -331,8 +416,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    count = build(args.output_dir)
-    print(f"Wrote {count} rule pages + index to {args.output_dir.relative_to(REPO_ROOT)}")
+    count, deprecated_count = build(args.output_dir)
+    retired = f" ({deprecated_count} retired)" if deprecated_count else ""
+    print(f"Wrote {count + deprecated_count} rule pages{retired} + index to {args.output_dir.relative_to(REPO_ROOT)}")
     return 0
 
 

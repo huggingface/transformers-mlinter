@@ -13,8 +13,8 @@ Release branches named `vX.Y-release` build and validate the release artifacts. 
 `vX.Y.ZrcN` triggers the same build, then publishes the validated artifacts to PyPI through GitHub OIDC trusted
 publishing.
 
-No post-release `.dev0` bump is required right now. The release process is a single version bump, validation pass,
-release branch push, and tag push.
+No `.dev0` suffix is used. The release process is a single version bump, validation pass, release branch push, and tag
+push, followed by a post-release bump that puts `main` on the next plain version.
 
 ## Prerequisites
 
@@ -172,3 +172,28 @@ After the environment approval and publish job succeed, verify the package from 
 python -m pip install -U "transformers-mlinter==X.Y.Z"
 mlinter --version
 ```
+
+## 9. Open the next development version
+
+With `X.Y.Z` on PyPI, move `main` off the released version so subsequent commits are not attributed to a version that
+has already shipped. The next version is normally the next patch, `X.Y.(Z+1)`.
+
+Two edits: set `[project].version` in `pyproject.toml` to the next version, and add a bare `## [Unreleased]` heading to
+`CHANGELOG.md` above the section that was just released. Leave `[Unreleased]` empty — the next change adds its own
+`### Added` / `### Improved` / `### Fixed` subsections.
+
+This lands on `main` through a branch rather than a direct push:
+
+```bash
+git switch main && git pull
+git switch -c start-NEXT
+# edit pyproject.toml and CHANGELOG.md
+git add pyproject.toml CHANGELOG.md
+git commit -m "Starting version NEXT"
+git push -u origin start-NEXT
+gh pr create --title "Starting version NEXT" --body "Post-release bump after X.Y.Z."
+gh pr merge --squash --delete-branch
+```
+
+Squashing keeps `Starting version NEXT` as the commit subject on `main`. This commit is not tagged and is not merged
+into `vX.Y-release`; the release branch stays at the released version.

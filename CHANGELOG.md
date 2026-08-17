@@ -7,7 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Added
+
+## [0.1.4] - 2026-08-17
+
+### Improved
 
 - Rules can now be retired. A `[rules.TRFXXX]` table marked `deprecated = true` is a tombstone: the rule
   module is deleted, and mlinter ignores the id everywhere — it is absent from `--list-rules`, from
@@ -27,9 +30,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   other model directories) find nothing outside a transformers checkout and stay quiet, as do
   per-model allowlists and cutoff dates. A run that matched no model integration file now says so
   instead of reporting `OK`.
-
-### Changed
-
 - Lint cache entries are keyed on the absolute file path, so the same relative path in two different
   model repositories no longer shares a cache entry. Existing entries are re-checked once.
 

@@ -75,6 +75,11 @@ def _write_custom_rules_toml(
     return custom_rules_path
 
 
+def _unwrapped(text: str) -> str:
+    """CLI output with rich's console wrapping collapsed, so assertions survive any terminal width."""
+    return " ".join(text.split())
+
+
 def _write_rules_toml_with_extra(tmp_dir: Path, extra: str) -> Path:
     """The bundled rule specs plus `extra` appended, for exercising entries no module backs."""
     custom_rules_path = tmp_dir / "custom_rules.toml"
@@ -958,7 +963,7 @@ class FooModel(FooPreTrainedModel):
                 exit_code = mlinter.main()
 
         self.assertEqual(exit_code, 2)
-        self.assertIn("Deprecated rule id(s): TRF999", stderr.getvalue())
+        self.assertIn("Deprecated rule id(s): TRF999", _unwrapped(stderr.getvalue()))
 
     def test_main_rejects_docs_request_for_a_deprecated_rule(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -976,7 +981,7 @@ class FooModel(FooPreTrainedModel):
                 exit_code = mlinter.main()
 
         self.assertEqual(exit_code, 2)
-        self.assertIn("Deprecated rule id(s): TRF999", stderr.getvalue())
+        self.assertIn("Deprecated rule id(s): TRF999", _unwrapped(stderr.getvalue()))
 
     def test_main_rejects_deprecated_rule_marked_default_enabled(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -991,7 +996,7 @@ class FooModel(FooPreTrainedModel):
                 exit_code = mlinter.main()
 
         self.assertEqual(exit_code, 2)
-        self.assertIn("deprecated rules cannot be enabled", stderr.getvalue())
+        self.assertIn("deprecated rules cannot be enabled", _unwrapped(stderr.getvalue()))
 
     def test_main_rejects_rules_toml_that_still_activates_a_deprecated_rule(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1005,8 +1010,8 @@ class FooModel(FooPreTrainedModel):
                 exit_code = mlinter.main()
 
         self.assertEqual(exit_code, 2)
-        self.assertIn("Deprecated rule(s) still active", stderr.getvalue())
-        self.assertIn("TRF001", stderr.getvalue())
+        self.assertIn("Deprecated rule(s) still active", _unwrapped(stderr.getvalue()))
+        self.assertIn("TRF001", _unwrapped(stderr.getvalue()))
 
     def test_deprecated_rule_with_a_surviving_module_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

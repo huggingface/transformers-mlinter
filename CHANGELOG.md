@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- A retired rule keeps its page on the docs site instead of disappearing from it. `TRF054` vanished
+  entirely when it was deprecated, so anyone meeting the id in an old CI log or an existing
+  `# trf-ignore: TRF054` comment got a 404 rather than an explanation. Deprecated rules now appear in a
+  `Removed rules` table on the rule index and get a generated page that gives the removal reason, says
+  the id no longer runs and that asking for it is an error, and notes that leftover suppression comments
+  are harmless. They stay out of the headline rule count and out of the filterable table of live rules.
+  The tombstone's `description` in `rules.toml` is the published prose, and is exposed as
+  `mlinter.DEPRECATED_TRF_RULE_SPECS` for the generator to read; a tombstone with no `description` falls
+  back to a generic line.
+
 
 ## [0.1.4] - 2026-08-17
 

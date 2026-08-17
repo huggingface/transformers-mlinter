@@ -930,8 +930,33 @@ class FooModel(FooPreTrainedModel):
                 self.assertNotIn("TRF999", mlinter.TRF_RULE_CHECKS)
                 self.assertNotIn("TRF999", mlinter.DEFAULT_ENABLED_TRF_RULES)
                 self.assertFalse(hasattr(mlinter, "TRF999"))
+                # The tombstone keeps its description so the docs site can still publish a page for it.
+                self.assertEqual(
+                    mlinter.DEPRECATED_TRF_RULE_SPECS["TRF999"], {"description": "Retired, kept as a tombstone."}
+                )
 
         self.assertNotIn("TRF999", mlinter.DEPRECATED_TRF_RULES)
+        self.assertNotIn("TRF999", mlinter.DEPRECATED_TRF_RULE_SPECS)
+
+    def test_deprecated_rule_without_a_description_still_gets_a_tombstone(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_rules_toml_with_extra(Path(tmp_dir), "\n[rules.TRF999]\ndeprecated = true\n")
+            with mlinter._using_rule_specs(custom_rules_path):
+                self.assertEqual(
+                    mlinter.DEPRECATED_TRF_RULE_SPECS["TRF999"],
+                    {"description": "TRF999 was removed from mlinter."},
+                )
+
+    def test_deprecated_rule_rejects_an_empty_description(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_rules_toml_with_extra(
+                Path(tmp_dir), '\n[rules.TRF999]\ndeprecated = true\ndescription = "   "\n'
+            )
+            with self.assertRaises(ValueError) as ctx:
+                with mlinter._using_rule_specs(custom_rules_path):
+                    pass
+
+        self.assertIn("description must be a non-empty string", str(ctx.exception))
 
     def test_bundled_deprecated_rules_are_fully_retired(self):
         # TRF054 was the first removal; the list only grows, so it doubles as the non-empty guard.
@@ -944,6 +969,19 @@ class FooModel(FooPreTrainedModel):
             self.assertFalse(hasattr(public_api, rule_id))
             module_path = mlinter.DEFAULT_RULE_SPECS_PATH.with_name(f"{rule_id.lower()}.py")
             self.assertFalse(module_path.exists(), f"{module_path.name} should have been deleted")
+            # Retired but still documented: the docs site builds a page per entry here, so a reader who
+            # meets the id in an old CI log finds out it is gone rather than hitting a 404.
+            description = public_api.DEPRECATED_TRF_RULE_SPECS[rule_id]["description"]
+            self.assertIsInstance(description, str)
+            self.assertTrue(description.strip())
+
+    def test_deprecated_rule_specs_is_public_and_disjoint_from_live_rules(self):
+        self.assertIn("DEPRECATED_TRF_RULE_SPECS", public_api.__all__)
+        self.assertEqual(
+            set(public_api.DEPRECATED_TRF_RULE_SPECS) & set(public_api.TRF_RULE_SPECS),
+            set(),
+        )
+        self.assertEqual(set(public_api.DEPRECATED_TRF_RULE_SPECS), set(public_api.DEPRECATED_TRF_RULES))
 
     def test_main_rejects_enabling_a_deprecated_rule(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

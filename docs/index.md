@@ -116,11 +116,13 @@ Both are visible on every rule page, along with a link to the rule's source modu
 - A `RULE_ID` module-level constant is set automatically by the discovery mechanism.
 - Every discovered rule must have a matching entry in the TOML file, and every TOML rule must have a
   matching module. Import-time validation fails if either side is missing.
-- A retired rule keeps a tombstone entry — `deprecated = true` and nothing else that matters — and loses
-  its module. mlinter then ignores that id everywhere: it disappears from `--list-rules`, from the rule
-  pages, and from the default set, and asking for it (`--enable-rules`, `--rule`) is an error. A rules
-  TOML that still describes it as a live rule is rejected outright, so a project cannot keep failing CI
-  on a rule whose code is gone.
+- A retired rule keeps a tombstone entry — `deprecated = true` and a one-line reason — and loses its
+  module. mlinter then ignores that id everywhere: it disappears from `--list-rules` and from the default
+  set, and asking for it (`--enable-rules`, `--rule`) is an error. A rules TOML that still describes it as
+  a live rule is rejected outright, so a project cannot keep failing CI on a rule whose code is gone.
+  This site is the one place a retired id survives: it keeps a page saying the rule was removed and why,
+  listed under [Removed rules](rules/#removed-rules), because a number in an old CI log still has to
+  be findable.
 
 That last point is why this site cannot drift: the rule pages are generated from `rules.toml` on every
 build, and `rules.toml` cannot describe a rule that has no code behind it.

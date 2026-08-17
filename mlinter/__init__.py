@@ -41,6 +41,7 @@ from ._helpers import (
 from ._version import __version__
 from .mlinter import (
     DEFAULT_ENABLED_TRF_RULES,
+    DEPRECATED_TRF_RULE_SPECS,
     DEPRECATED_TRF_RULES,
     TRF_MODEL_DIR_ALLOWLISTS,
     TRF_RULE_CHECKS,
@@ -70,6 +71,7 @@ from .mlinter import (
 __all__ = [
     "DEFAULT_ENABLED_TRF_RULES",
     "DEPRECATED_TRF_RULES",
+    "DEPRECATED_TRF_RULE_SPECS",
     "MODELS_ROOT",
     "TRF_MODEL_DIR_ALLOWLISTS",
     "TRF_RULE_CHECKS",

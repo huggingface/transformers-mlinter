@@ -23,7 +23,8 @@ Run `make format` or `make lint` and `make test` before wrapping up a change.
   Never hand-edit it, and never commit it.
 - Adding a rule to `rules.toml` therefore documents it: there is no page to write. The `description`
   and `explanation` fields are the published prose, so write them for a contributor reading a failing
-  CI job.
+  CI job. The same holds for a `deprecated = true` tombstone: its `description` is the whole of the
+  retired rule's page, which the site keeps publishing so an old rule id never 404s.
 - Only the hand-written pages (`index.md`, `usage.md`, `suppressing.md`, `contributing.md`,
   `release.md`) are committed under `docs/`. `docs/rules/`, `docs/changelog.md` (copied from the root
   `CHANGELOG.md`) and `docs/_data/mlinter.yml` (version from `pyproject.toml`) are all generated.

@@ -52,6 +52,10 @@ mlinter --rules-toml /path/to/custom-rules.toml
 A custom rules file must declare the same top-level `version = 1` as the bundled one, and every rule it
 names must have a matching `trf*.py` module in the installed package.
 
+Rules that have been removed from mlinter are the one exception: they must be marked `deprecated = true`
+(or dropped from the file). mlinter then ignores them. A custom file that still lists a removed rule as
+active fails with exit code 2 and names the rule, rather than silently linting nothing under that id.
+
 ## Reading the docs from the terminal
 
 ```bash

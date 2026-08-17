@@ -75,6 +75,13 @@ def _write_custom_rules_toml(
     return custom_rules_path
 
 
+def _write_rules_toml_with_extra(tmp_dir: Path, extra: str) -> Path:
+    """The bundled rule specs plus `extra` appended, for exercising entries no module backs."""
+    custom_rules_path = tmp_dir / "custom_rules.toml"
+    custom_rules_path.write_text(mlinter.DEFAULT_RULE_SPECS_PATH.read_text(encoding="utf-8") + extra, encoding="utf-8")
+    return custom_rules_path
+
+
 class CheckModelingStructureTest(unittest.TestCase):
     # --- TRF001: config_class naming consistency (old TRF003) ---
 
@@ -702,7 +709,6 @@ class FooModel(FooPreTrainedModel):
         self.assertEqual(public_api.TRF051, "TRF051")
         self.assertEqual(public_api.TRF052, "TRF052")
         self.assertEqual(public_api.TRF053, "TRF053")
-        self.assertEqual(public_api.TRF054, "TRF054")
         self.assertEqual(public_api.TRF055, "TRF055")
         self.assertEqual(public_api.TRF056, "TRF056")
         self.assertEqual(public_api.TRF057, "TRF057")
@@ -753,7 +759,6 @@ class FooModel(FooPreTrainedModel):
         self.assertIn("TRF051", public_api.__all__)
         self.assertIn("TRF052", public_api.__all__)
         self.assertIn("TRF053", public_api.__all__)
-        self.assertIn("TRF054", public_api.__all__)
         self.assertIn("TRF055", public_api.__all__)
         self.assertIn("TRF056", public_api.__all__)
         self.assertIn("TRF057", public_api.__all__)
@@ -904,6 +909,120 @@ class FooModel(FooPreTrainedModel):
         self.assertEqual(exit_code, 2)
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("expected version 1", stderr.getvalue())
+
+    # --- Deprecated rules ---
+
+    def test_deprecated_rule_is_ignored_by_the_registry(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_rules_toml_with_extra(
+                Path(tmp_dir),
+                '\n[rules.TRF999]\ndeprecated = true\ndescription = "Retired, kept as a tombstone."\n',
+            )
+            with mlinter._using_rule_specs(custom_rules_path):
+                self.assertIn("TRF999", mlinter.DEPRECATED_TRF_RULES)
+                self.assertNotIn("TRF999", mlinter.TRF_RULES)
+                self.assertNotIn("TRF999", mlinter.TRF_RULE_SPECS)
+                self.assertNotIn("TRF999", mlinter.TRF_RULE_CHECKS)
+                self.assertNotIn("TRF999", mlinter.DEFAULT_ENABLED_TRF_RULES)
+                self.assertFalse(hasattr(mlinter, "TRF999"))
+
+        self.assertNotIn("TRF999", mlinter.DEPRECATED_TRF_RULES)
+
+    def test_bundled_deprecated_rules_are_fully_retired(self):
+        # TRF054 was the first removal; the list only grows, so it doubles as the non-empty guard.
+        self.assertIn("TRF054", mlinter.BUNDLED_DEPRECATED_TRF_RULES)
+        for rule_id in mlinter.BUNDLED_DEPRECATED_TRF_RULES:
+            self.assertIn(rule_id, public_api.DEPRECATED_TRF_RULES)
+            self.assertNotIn(rule_id, public_api.TRF_RULES)
+            self.assertNotIn(rule_id, public_api.TRF_RULE_CHECKS)
+            self.assertNotIn(rule_id, public_api.__all__)
+            self.assertFalse(hasattr(public_api, rule_id))
+            module_path = mlinter.DEFAULT_RULE_SPECS_PATH.with_name(f"{rule_id.lower()}.py")
+            self.assertFalse(module_path.exists(), f"{module_path.name} should have been deleted")
+
+    def test_main_rejects_enabling_a_deprecated_rule(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_rules_toml_with_extra(
+                Path(tmp_dir),
+                '\n[rules.TRF999]\ndeprecated = true\ndescription = "Retired, kept as a tombstone."\n',
+            )
+            stderr = StringIO()
+            with (
+                patch.object(
+                    mlinter.sys,
+                    "argv",
+                    ["mlinter", "--rules-toml", str(custom_rules_path), "--enable-rules", "TRF999"],
+                ),
+                redirect_stderr(stderr),
+            ):
+                exit_code = mlinter.main()
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("Deprecated rule id(s): TRF999", stderr.getvalue())
+
+    def test_main_rejects_docs_request_for_a_deprecated_rule(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_rules_toml_with_extra(
+                Path(tmp_dir),
+                '\n[rules.TRF999]\ndeprecated = true\ndescription = "Retired, kept as a tombstone."\n',
+            )
+            stderr = StringIO()
+            with (
+                patch.object(
+                    mlinter.sys, "argv", ["mlinter", "--rules-toml", str(custom_rules_path), "--rule", "TRF999"]
+                ),
+                redirect_stderr(stderr),
+            ):
+                exit_code = mlinter.main()
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("Deprecated rule id(s): TRF999", stderr.getvalue())
+
+    def test_main_rejects_deprecated_rule_marked_default_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_rules_toml_with_extra(
+                Path(tmp_dir), "\n[rules.TRF999]\ndeprecated = true\ndefault_enabled = true\n"
+            )
+            stderr = StringIO()
+            with (
+                patch.object(mlinter.sys, "argv", ["mlinter", "--rules-toml", str(custom_rules_path), "--list-rules"]),
+                redirect_stderr(stderr),
+            ):
+                exit_code = mlinter.main()
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("deprecated rules cannot be enabled", stderr.getvalue())
+
+    def test_main_rejects_rules_toml_that_still_activates_a_deprecated_rule(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_custom_rules_toml(Path(tmp_dir))
+            stderr = StringIO()
+            with (
+                patch.object(mlinter, "BUNDLED_DEPRECATED_TRF_RULES", frozenset({"TRF001"})),
+                patch.object(mlinter.sys, "argv", ["mlinter", "--rules-toml", str(custom_rules_path), "--list-rules"]),
+                redirect_stderr(stderr),
+            ):
+                exit_code = mlinter.main()
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("Deprecated rule(s) still active", stderr.getvalue())
+        self.assertIn("TRF001", stderr.getvalue())
+
+    def test_deprecated_rule_with_a_surviving_module_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_custom_rules_toml(Path(tmp_dir), trf001_default_enabled=False)
+            custom_rules_path.write_text(
+                custom_rules_path.read_text(encoding="utf-8").replace(
+                    "[rules.TRF001]\n", "[rules.TRF001]\ndeprecated = true\n", 1
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError) as exc:
+                with mlinter._using_rule_specs(custom_rules_path):
+                    pass
+
+        self.assertIn("trf001.py still exists", str(exc.exception))
+        self.assertEqual(mlinter.ACTIVE_RULE_SPECS_PATH, mlinter.DEFAULT_RULE_SPECS_PATH)
 
     def test_analyze_file_allows_subscripted_class_bases(self):
         source = (
@@ -4412,60 +4531,6 @@ class FooForConditionalGeneration(FooPreTrainedModel):
         file_path = Path("src/transformers/models/foo/modeling_foo.py")
         violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF053})
         self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF053], [])
-
-    # --- TRF054: processor media token ids are properties ---
-
-    def test_trf054_flags_token_id_instance_attribute(self):
-        source = """
-class FooProcessor(ProcessorMixin):
-    def __init__(self, image_processor, tokenizer):
-        super().__init__(image_processor, tokenizer)
-        self.image_token_id = tokenizer.convert_tokens_to_ids(self.image_token)
-"""
-        file_path = Path("src/transformers/models/foo/processing_foo.py")
-        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
-            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF054})
-        trf054 = [v for v in violations if v.rule_id == mlinter.TRF054]
-        self.assertEqual(len(trf054), 1)
-        self.assertIn("FooProcessor.__init__ sets self.image_token_id", trf054[0].message)
-
-    def test_trf054_allows_property(self):
-        source = """
-class FooProcessor(ProcessorMixin):
-    def __init__(self, image_processor, tokenizer):
-        super().__init__(image_processor, tokenizer)
-
-    @property
-    def image_token_id(self):
-        return self.tokenizer.convert_tokens_to_ids(self.image_token)
-"""
-        file_path = Path("src/transformers/models/foo/processing_foo.py")
-        with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
-            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF054})
-        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF054], [])
-
-    def test_trf054_cutoff_exempts_old_model(self):
-        source = """
-class FooProcessor(ProcessorMixin):
-    def __init__(self, image_processor, tokenizer):
-        super().__init__(image_processor, tokenizer)
-        self.image_token_id = tokenizer.convert_tokens_to_ids(self.image_token)
-"""
-        file_path = Path("src/transformers/models/foo/processing_foo.py")
-        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2020, 1, 1)):
-            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF054})
-        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF054], [])
-
-    def test_trf054_ignores_non_processing_files(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.image_token_id = config.image_token_id
-"""
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF054})
-        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF054], [])
 
     # --- TRF055: `config` must be annotation, not assignment ---
 

@@ -7,7 +7,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-- XXX
+### Added
+
+- Rules can now be retired. A `[rules.TRFXXX]` table marked `deprecated = true` is a tombstone: the rule
+  module is deleted, and mlinter ignores the id everywhere — it is absent from `--list-rules`, from
+  `TRF_RULES` / `TRF_RULE_CHECKS` / the package's public `TRFXXX` constants, from the generated rule pages,
+  and from the default set, so a project that still passes `# trf-ignore: TRFXXX` or has the rule in its own
+  config is simply unaffected. Asking for a deprecated rule (`--enable-rules TRFXXX`, `--rule TRFXXX`) is an
+  error. A rules TOML — including one passed with `--rules-toml` — that still describes a retired rule as
+  active fails the run with exit code 2 and names the rule instead of silently linting nothing under that id.
+  `.ai/skills/remove-mlinter-rule/` walks an agent through a removal.
+
+### Removed
+
+- Removed `TRF054`, which flagged `self.image_token_id` / `self.video_token_id` / `self.audio_token_id`
+  assignments in processor `__init__` methods and asked for a property reading the tokenizer instead. It
+  fired on legitimate processor code often enough that the noise outweighed what it caught. `[rules.TRF054]`
+  stays in `rules.toml` as a `deprecated = true` tombstone and the number is never reused. Nothing to do on
+  the transformers side: mlinter ignores the id, and leftover `# trf-ignore: TRF054` comments are harmless.
+  A project shipping its own rules TOML must mark `TRF054` `deprecated = true` or drop the table — leaving it
+  active now fails the run with exit code 2.
 
 
 ## [0.1.3] - 2026-08-13

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
 import json
 import subprocess
 import tempfile
@@ -3312,6 +3313,93 @@ class FooProjectionAttentions(BaseModelOutputWithPooling):
 
     def test_trf031_ignores_non_dataclasses(self):
         self.assertEqual(self._run(mlinter.TRF031, "class FooConfigHolder:\n    x: int\n"), [])
+
+    def test_trf031_ignores_argument_bundle_with_many_mandatory_fields(self):
+        # `ModelOutput.__post_init__` raises unless every field after the first defaults to
+        # None, so a bundle of mandatory fields cannot become one. Shape taken from
+        # `pegasus_x`'s `DimensionInfo`, TRF031's only finding on transformers main.
+        source = """
+@dataclass
+class DimensionInfo:
+    \"\"\"Wrapper for dimension info.\"\"\"
+
+    batch_size: int
+    seq_len: int
+    block_size: int
+    num_heads: int
+"""
+        self.assertEqual(self._run(mlinter.TRF031, source), [])
+
+    def test_trf031_ignores_argument_bundle_in_modular_file(self):
+        # The two ESMFold2 bundles from the report, which are passed *into* the atom and
+        # diffusion stacks rather than returned.
+        source = """
+@dataclass
+class EsmFold2AtomInputs:
+    atom_positions: torch.Tensor
+    atom_mask: torch.Tensor
+    residue_index: torch.Tensor
+"""
+        self.assertEqual(self._run(mlinter.TRF031, source, file_name="modular_foo.py"), [])
+
+    def test_trf031_still_flags_single_mandatory_field(self):
+        # The discriminator is the number of mandatory fields, not the presence of defaults:
+        # one required field plus None-defaulted extras is exactly a legal ModelOutput.
+        source = """
+@dataclass
+class FooStructureOutput:
+    positions: torch.Tensor
+    confidence: torch.Tensor = None
+    attentions: torch.Tensor = None
+"""
+        violations = self._run(mlinter.TRF031, source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("ModelOutput", violations[0].message)
+
+    def test_trf031_ignores_exactly_two_mandatory_fields(self):
+        # Two is the boundary: `class_fields[1:]` is one field, it has no default, so
+        # `ModelOutput.__post_init__` already raises. This is the shape the rule's own
+        # documented example used to prescribe.
+        source = """
+@dataclass
+class AcmeStructureOutput:
+    positions: torch.Tensor
+    confidence: torch.Tensor
+"""
+        self.assertEqual(self._run(mlinter.TRF031, source), [])
+
+    def test_trf031_ignores_class_vars_when_counting_mandatory_fields(self):
+        # A ClassVar is not a dataclass field, so it must not push a real output type past
+        # the threshold and silence a genuine finding.
+        source = """
+@dataclass
+class FooStructureOutput:
+    registry: ClassVar[dict] = {}
+    schema: ClassVar[str]
+    positions: torch.Tensor
+"""
+        violations = self._run(mlinter.TRF031, source)
+        self.assertEqual(len(violations), 1)
+
+    def test_trf031_documented_example_is_a_legal_model_output(self):
+        # AGENTS.md: the `diff` in rules.toml IS the published docs page for the rule. The
+        # example must therefore be one the rule still flags AND one ModelOutput can accept,
+        # or the docs prescribe a fix that raises at construction time.
+        spec = public_api.TRF_RULE_SPECS["TRF031"]
+        added = [
+            line[1:]
+            for line in spec["explanation"]["diff"].splitlines()
+            if line.startswith("+") or line.startswith(" ")
+        ]
+        source = "\n".join(added)
+        mandatory = [
+            node for node in ast.parse(source).body[0].body if isinstance(node, ast.AnnAssign) and node.value is None
+        ]
+        self.assertLessEqual(
+            len(mandatory),
+            1,
+            "the documented fix has more than one mandatory field, which ModelOutput rejects",
+        )
 
     # --- TRF032: masked fill must use torch.finfo(dtype).min ---
 

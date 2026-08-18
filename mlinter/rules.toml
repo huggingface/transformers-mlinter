@@ -552,7 +552,7 @@ allowlist_models = []
 cutoff_date = "2026-06-20"
 
 [rules.TRF031.explanation]
-what_it_does = "In modeling_*.py and modular_*.py, flags a top-level `@dataclass` class whose bases do not include something ending in `Output`."
+what_it_does = "In modeling_*.py and modular_*.py, flags a top-level `@dataclass` class whose bases do not include something ending in `Output`. A class with two or more fields lacking a default is skipped: `ModelOutput` requires every field after the first to default to `None`, so such a class is an internal argument bundle rather than a return type."
 why_bad = "A plain dataclass does not index like a tuple, does not survive `return_dict=False`, and is invisible to @auto_docstring, so its fields never reach the generated API docs. Inheriting ModelOutput gets all three for free."
 diff = '''
  @auto_docstring
@@ -560,7 +560,8 @@ diff = '''
 -class AcmeStructureOutput:
 +class AcmeStructureOutput(ModelOutput):
      positions: torch.Tensor
-     confidence: torch.Tensor
+-    confidence: torch.Tensor
++    confidence: torch.Tensor = None
 '''
 
 [rules.TRF032]

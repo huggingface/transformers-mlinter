@@ -35,6 +35,23 @@ def _is_dataclass(class_node: ast.ClassDef) -> bool:
     return False
 
 
+def _is_class_var(annotation: ast.expr) -> bool:
+    target = annotation.value if isinstance(annotation, ast.Subscript) else annotation
+    try:
+        return full_name(target).split(".")[-1] == "ClassVar"
+    except ValueError:
+        return False
+
+
+def _mandatory_field_count(class_node: ast.ClassDef) -> int:
+    """Number of dataclass fields with no default. ClassVars are not fields and do not count."""
+    return sum(
+        1
+        for node in class_node.body
+        if isinstance(node, ast.AnnAssign) and node.value is None and not _is_class_var(node.annotation)
+    )
+
+
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     if not file_path.name.startswith(("modeling_", "modular_")):
         return []
@@ -54,6 +71,12 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         # Any base carrying `Output` in its name is a ModelOutput subclass: ModelOutput itself, one of
         # the BaseModelOutputWith* variants, or another model's output class.
         if any("Output" in name for name in base_names):
+            continue
+        # `ModelOutput.__post_init__` raises unless every field after the first defaults to
+        # None, so a class with two or more mandatory fields cannot become a ModelOutput at
+        # all -- it is an internal argument bundle, not a return type, and the fix this rule
+        # prescribes would raise at construction time.
+        if _mandatory_field_count(class_node) >= 2:
             continue
         if _has_rule_suppression(source_lines, RULE_ID, class_node.lineno):
             continue

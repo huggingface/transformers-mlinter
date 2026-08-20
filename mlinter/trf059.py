@@ -159,6 +159,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         if forward_method is None:
             if _inherits_experts_module(class_node.name, class_to_bases):
                 continue
+            if _has_rule_suppression(source_lines, RULE_ID, class_node.lineno):
+                continue
             violations.append(
                 Violation(
                     file_path=file_path,

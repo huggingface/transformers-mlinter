@@ -5331,6 +5331,14 @@ class FooExperts(IntermediateModule):
 """
         self.assertEqual(self._run_trf059(source), [])
 
+    def test_trf059_respects_class_suppression_without_forward(self):
+        source = """
+# trf-ignore: TRF059
+class FooExperts(nn.Module):
+    pass
+"""
+        self.assertEqual(self._run_trf059(source), [])
+
     def test_trf059_respects_llama4_allowlist(self):
         source = """
 class Llama4TextExperts(nn.Module):

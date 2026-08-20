@@ -21,10 +21,10 @@ from ._helpers import (
     MODELS_ROOT,
     Violation,
     _class_methods,
+    _collect_class_bases,
     _has_rule_suppression,
     _model_dir_name,
     _simple_name,
-    full_name,
 )
 
 
@@ -84,23 +84,22 @@ def _is_routed_experts_class(class_name: str) -> bool:
     return class_name.endswith("Experts") and "SharedExperts" not in class_name
 
 
-def _collect_class_bases(tree: ast.Module) -> dict[str, list[str]]:
-    class_to_bases: dict[str, list[str]] = {}
-    for node in tree.body:
-        if not isinstance(node, ast.ClassDef):
-            continue
-        base_names = []
-        for base in node.bases:
-            try:
-                base_names.append(full_name(base))
-            except ValueError:
-                continue
-        class_to_bases[node.name] = base_names
-    return class_to_bases
+def _inherits_experts_module(
+    class_name: str, class_to_bases: dict[str, list[str]], visiting: set[str] | None = None
+) -> bool:
+    if visiting is None:
+        visiting = set()
+    if class_name in visiting:
+        return False
+    visiting.add(class_name)
 
-
-def _inherits_experts_module(class_name: str, class_to_bases: dict[str, list[str]]) -> bool:
-    return any(_simple_name(base_name).endswith("Experts") for base_name in class_to_bases.get(class_name, []))
+    for base_name in class_to_bases.get(class_name, []):
+        simple_base_name = _simple_name(base_name)
+        if simple_base_name.endswith("Experts"):
+            return True
+        if simple_base_name in class_to_bases and _inherits_experts_module(simple_base_name, class_to_bases, visiting):
+            return True
+    return False
 
 
 def _forward_positional_params(forward_method: ast.FunctionDef) -> list[str]:

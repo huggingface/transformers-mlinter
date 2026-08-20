@@ -5424,6 +5424,16 @@ class FooExperts(BaseExperts):
 """
         self.assertEqual(self._run_trf059(source), [])
 
+    def test_trf059_accepts_transitively_inherited_experts_forward(self):
+        source = """
+class IntermediateModule(BaseExperts):
+    pass
+
+class FooExperts(IntermediateModule):
+    pass
+"""
+        self.assertEqual(self._run_trf059(source), [])
+
     def test_trf059_respects_llama4_allowlist(self):
         source = """
 class Llama4TextExperts(nn.Module):

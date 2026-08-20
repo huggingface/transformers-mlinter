@@ -35,6 +35,7 @@ from mlinter import trf023 as _trf023_mod
 from mlinter import trf038 as _trf038_mod
 from mlinter import trf042 as _trf042_mod
 from mlinter import trf057 as _trf057_mod
+from mlinter import trf059 as _trf059_mod
 
 
 TEST_PP_PLAN_MODULES = {"foo": {"embed_tokens", "final_layer_norm", "layers", "norm"}}
@@ -717,6 +718,7 @@ class FooModel(FooPreTrainedModel):
         self.assertEqual(public_api.TRF055, "TRF055")
         self.assertEqual(public_api.TRF056, "TRF056")
         self.assertEqual(public_api.TRF057, "TRF057")
+        self.assertEqual(public_api.TRF059, "TRF059")
 
     def test_package_root_all_lists_supported_api(self):
         self.assertIn("__version__", public_api.__all__)
@@ -767,6 +769,7 @@ class FooModel(FooPreTrainedModel):
         self.assertIn("TRF055", public_api.__all__)
         self.assertIn("TRF056", public_api.__all__)
         self.assertIn("TRF057", public_api.__all__)
+        self.assertIn("TRF059", public_api.__all__)
         self.assertNotIn("_collect_class_bases", public_api.__all__)
         self.assertNotIn("_rule_id", public_api.__all__)
 
@@ -5254,6 +5257,80 @@ class FooModel(LlamaModel):
         return super().forward(input_ids)
 """
         self.assertEqual(self._trf057_modular(modular_source, {}), [])
+
+    # --- TRF059: moe_tp_experts forward signature ---
+
+    def _run_trf059(self, source):
+        with patch.object(_trf059_mod, "_MOE_TP_MODEL_DIRS", {"foo"}):
+            return self._run(mlinter.TRF059, source)
+
+    def test_trf059_discovers_models_from_tp_plan(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            models_root = Path(tmp_dir) / "src" / "transformers" / "models"
+            model_dir = models_root / "foo"
+            model_dir.mkdir(parents=True)
+            (model_dir / "configuration_foo.py").write_text(
+                'base_model_tp_plan = {"layers.*.experts": "moe_tp_experts"}\n', encoding="utf-8"
+            )
+            with (
+                patch.object(_trf059_mod, "MODELS_ROOT", models_root),
+                patch.object(_helpers_mod, "MODELS_ROOT", models_root),
+            ):
+                self.assertEqual(_trf059_mod._model_dirs_with_moe_tp_experts(), {"foo"})
+
+    def test_trf059_accepts_canonical_signature(self):
+        source = """
+class FooExperts(nn.Module):
+    def forward(self, hidden_states, top_k_index, top_k_weights):
+        return hidden_states
+"""
+        self.assertEqual(self._run_trf059(source), [])
+
+    def test_trf059_accepts_common_routing_aliases(self):
+        source = """
+class FooExperts(nn.Module):
+    def forward(self, x, selected_experts, routing_weights, implementation=None):
+        return x
+"""
+        self.assertEqual(self._run_trf059(source), [])
+
+    def test_trf059_flags_wrong_routing_argument_order(self):
+        source = """
+class FooExperts(nn.Module):
+    def forward(self, hidden_states, top_k_weights, top_k_index):
+        return hidden_states
+"""
+        violations = self._run_trf059(source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("expected arg 2 to be top-k expert indices", violations[0].message)
+
+    def test_trf059_flags_missing_routing_arguments(self):
+        source = """
+class FooExperts(nn.Module):
+    def forward(self, hidden_states):
+        return hidden_states
+"""
+        violations = self._run_trf059(source)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("expected at least 3 positional arguments after self", violations[0].message)
+
+    def test_trf059_accepts_inherited_experts_forward(self):
+        source = """
+class FooExperts(BaseExperts):
+    pass
+"""
+        self.assertEqual(self._run_trf059(source), [])
+
+    def test_trf059_respects_llama4_allowlist(self):
+        source = """
+class Llama4TextExperts(nn.Module):
+    def forward(self, hidden_states):
+        return hidden_states
+"""
+        file_path = Path("src/transformers/models/llama4/modeling_llama4.py")
+        with patch.object(_trf059_mod, "_MOE_TP_MODEL_DIRS", {"llama4"}):
+            violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF059})
+        self.assertEqual([violation for violation in violations if violation.rule_id == mlinter.TRF059], [])
 
 
 if __name__ == "__main__":

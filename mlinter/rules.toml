@@ -1000,3 +1000,18 @@ diff = '''
      def forward(self, input_ids, pixel_values=None, **kwargs):
          ...
 '''
+
+[rules.TRF059]
+description = "Routed Experts modules tagged with `moe_tp_experts` must expose hidden states, top-k indices and top-k weights in that order."
+default_enabled = true
+allowlist_models = ["llama4"]
+
+[rules.TRF059.explanation]
+what_it_does = "For model directories whose tensor-parallel plan assigns `moe_tp_experts`, checks that routed `*Experts` classes expose hidden states, top-k indices and top-k routing weights as their first three positional `forward` arguments. Common aliases such as `selected_experts` and `routing_weights` are accepted."
+why_bad = "`MoeExpertsParallel` applies a gradient transform to positional argument 3. A different signature silently applies the transform to the wrong tensor or skips it."
+diff = '''
+ class AcmeExperts(nn.Module):
+-    def forward(self, hidden_states):
++    def forward(self, hidden_states, top_k_index, top_k_weights):
+         ...
+'''

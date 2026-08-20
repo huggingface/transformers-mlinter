@@ -235,6 +235,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `get_image_features`, `get_video_features`, `get_audio_features`, `get_text_features`, `preprocess` and `__call__`.
   A class or method in a `modular_*.py` file is checked against the files generated from it.
 
+- `TRF059` checks that routed Experts modules selected by `moe_tp_experts` expose hidden states, top-k indices and top-k routing weights as their first three positional `forward` arguments.
+
 ### Improved
 
 - Added `--output-json FILE`, which writes every finding to `FILE` as JSON alongside the normal output: a

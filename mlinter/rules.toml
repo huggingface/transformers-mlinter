@@ -602,7 +602,7 @@ allowlist_models = ["cosmos3_edge", "dinov3_convnext", "hunyuan_vl", "kimi_k25",
 cutoff_date = "2026-06-20"
 
 [rules.TRF034.explanation]
-what_it_does = "In modeling_*.py and modular_*.py, flags a locally-defined class whose name ends in `Layer` or `Block`, instantiated inside an `nn.ModuleList(...)`, that does not reach `GradientCheckpointingLayer` through its local base chain. In modular files, an imported base class is treated as inconclusive rather than non-compliant because the generated modeling file may flatten it to `GradientCheckpointingLayer`. One violation per layer class. ModuleLists of projections, heads or experts are out of scope because they are not checkpointing boundaries."
+what_it_does = "In modeling_*.py and modular_*.py, flags a locally-defined class whose name ends in `Layer` or `Block`, instantiated inside an `nn.ModuleList(...)`, that does not reach `GradientCheckpointingLayer` through its base chain. For modular files, relative imports into sibling model implementation files are followed before deciding; chains that still cannot be resolved are treated as inconclusive. One violation per layer class. ModuleLists of projections, heads or experts are out of scope because they are not checkpointing boundaries."
 why_bad = "`gradient_checkpointing_enable()` wraps layers by asking each one whether it is a GradientCheckpointingLayer. A plain nn.Module in the stack is skipped silently, so training appears to use checkpointing and still allocates full activations for those layers, and the OOM shows up far from the cause."
 diff = '''
 -class AcmeDecoderLayer(nn.Module):

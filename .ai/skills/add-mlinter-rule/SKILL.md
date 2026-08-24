@@ -54,14 +54,16 @@ description: Add a new TRF rule to the mlinter. Checks for duplicates, creates t
    - If fixing, apply the fixes and re-run the rule to confirm zero violations.
    - If allowlisting, extract the model directory names from the violation file paths and add them to `allowlist_models`.
 
-7. Add tests in `tests/test_mlinter.py`.
+7. Add tests in `tests/test_trfXXX.py`.
    - Add at least one positive test and one negative test.
    - Follow the existing pattern: create source strings, call `mlinter.analyze_file()`, and assert on violations.
+   - If the tests use the standard `_run(rule, source, file_name=...)` helper, inherit from
+     `RuleTestCase` from `tests/rule_test_utils.py`.
    - For cross-file rules, use `tempfile.TemporaryDirectory` to create real file structures.
    - If the rule maps a modeling class to a specific config class, add a regression where another config class in the same file would otherwise cause a false positive or false negative.
    - Run the focused tests:
    ```bash
-   pytest tests/test_mlinter.py -x -v -k "trfXXX"
+   pytest tests/test_trfXXX.py -x -v
    ```
 
 8. Update documentation.
@@ -116,7 +118,9 @@ The base `PreTrainedConfig` does not define `tie_word_embeddings`. When a rule n
 - Rule modules: `mlinter/trf*.py`
 - Rule config: `mlinter/rules.toml`
 - Helpers: `mlinter/_helpers.py`
-- Tests: `tests/test_mlinter.py`
+- Rule tests: `tests/test_trfXXX.py`
+- Shared rule-test helpers: `tests/rule_test_utils.py`
+- General linter tests: `tests/test_mlinter.py`
 - README (repo front door + PyPI description): `README.md`
 - Docs site source: `docs/` — hand-written pages only; `docs/rules/` is generated and git-ignored
 - Rule page generator: `scripts/build_docs.py`

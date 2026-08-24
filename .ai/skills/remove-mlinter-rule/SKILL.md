@@ -62,8 +62,7 @@ the next number after the highest `trf*.py`.
    ```
 
 4. Delete the tests.
-   - Remove the rule's own test block in `tests/test_mlinter.py` — the section under the
-     `# --- TRFXXX: ... ---` comment, up to the next `# ---` marker.
+   - Delete the rule's own test file, `tests/test_trfXXX.py`.
    - Remove the id from the public-API tests: the `assertEqual(public_api.TRFXXX, "TRFXXX")` line and the
      `assertIn("TRFXXX", public_api.__all__)` line.
    - `grep -rn "TRFXXX" tests/ mlinter/` must come back empty except for the tombstone in `rules.toml`.
@@ -104,5 +103,6 @@ the next number after the highest `trf*.py`.
 - Deprecation handling: `_load_rule_specs`, `_build_rule_checks`, `_validate_rule_ids`, and
   `BUNDLED_DEPRECATED_TRF_RULES` in `mlinter/mlinter.py`
 - Public API surface: `mlinter/__init__.py`
-- Tests: `tests/test_mlinter.py` (engine behaviour under "Deprecated rules")
+- Rule tests: `tests/test_trfXXX.py`
+- General linter tests: `tests/test_mlinter.py` (engine behaviour under "Deprecated rules")
 - The inverse skill: `.ai/skills/add-mlinter-rule/SKILL.md`

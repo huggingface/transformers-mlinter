@@ -12,7 +12,10 @@ Run `make format` or `make lint` and `make test` before wrapping up a change.
 
 - Rule modules live in `mlinter/trf*.py`.
 - Rule metadata lives in `mlinter/rules.toml`.
-- Focused tests live in `tests/test_mlinter.py`.
+- Rule-specific tests live in `tests/test_trfXXX.py`, one file per rule.
+- Shared rule-test helpers live in `tests/rule_test_utils.py`; rule test classes should inherit from
+  `RuleTestCase` when they use the standard `_run(rule, source, file_name=...)` helper.
+- General CLI, registry, cache, discovery, and public-API tests live in `tests/test_mlinter.py`.
 - Skills live under `.ai/skills/`.
 - The docs site source lives in `docs/` (Jekyll + just-the-docs), published to
   <https://huggingface.github.io/transformers-mlinter/> by `.github/workflows/pages.yml`.

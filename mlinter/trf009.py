@@ -22,10 +22,17 @@ from ._helpers import MODELS_ROOT, Violation, _has_rule_suppression, _known_mode
 
 RULE_ID = ""  # Set by discovery
 
-# The model-directory file kinds the one-file-one-definition policy covers. `modular_*.py` is
-# deliberately absent: inheriting another model's classes is exactly what a modular file is for, and
-# the converter flattens those imports away in the file it generates. Test files are absent for the
-# same practical reason -- a test importing another model's test case is the normal way to write one.
+# The model-directory file kinds the one-file-one-definition policy covers: the files that make up a
+# model's shipped implementation. Three other kinds live in a model directory and are deliberately
+# absent. `modular_*.py`, because inheriting another model's classes is exactly what a modular file
+# is for, and the converter flattens those imports away in the file it generates. `convert_*.py`,
+# because a conversion script is a one-off tool rather than part of the model: it legitimately builds
+# a checkpoint out of whatever the original release used, and transformers has 256 cross-model
+# imports in those scripts that are all working as intended. And `__init__.py`, because the handful
+# of cross-model aliases it carries (`from ..roberta.tokenization_roberta import RobertaTokenizer as
+# BartTokenizer`) are the same coupling already reported on the tokenizer file itself, so checking
+# both would report one problem twice. Test files are out for the practical reason that a test
+# importing another model's test case is the normal way to write one.
 _CHECKED_PREFIXES = (
     "modeling_",
     "configuration_",

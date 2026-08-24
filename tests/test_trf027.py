@@ -13,17 +13,15 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, _helpers_mod, mlinter, patch
+from tests.rule_test_utils import RuleTestCase, _helpers_mod, mlinter, patch
 
 
 class TRF027Test(RuleTestCase):
     # --- TRF027: no bare assert in model files ---
 
-    def _run(self, rule, source, file_name="modeling_foo.py"):
-        file_path = Path(f"src/transformers/models/foo/{file_name}")
+    def _trf027(self, source, file_name="modeling_foo.py"):
         with patch.object(_helpers_mod, "model_contribution_date", return_value=None):
-            violations = mlinter.analyze_file(file_path, source, enabled_rules={rule})
-        return [v for v in violations if v.rule_id == rule]
+            return self._run(mlinter.TRF027, source, file_name=file_name)
 
     def test_trf027_flags_assert(self):
         source = """
@@ -32,7 +30,7 @@ class FooAttention(nn.Module):
         assert hidden_states.dim() == 3
         return hidden_states
 """
-        violations = self._run(mlinter.TRF027, source)
+        violations = self._trf027(source)
         self.assertEqual(len(violations), 1)
         self.assertIn("assert", violations[0].message)
 
@@ -44,9 +42,9 @@ class FooAttention(nn.Module):
             raise ValueError("expected 3D")
         return hidden_states
 """
-        self.assertEqual(self._run(mlinter.TRF027, source), [])
+        self.assertEqual(self._trf027(source), [])
         assert_source = "def f(x):\n    assert x\n"
-        self.assertEqual(self._run(mlinter.TRF027, assert_source, file_name="processing_foo.py"), [])
+        self.assertEqual(self._trf027(assert_source, file_name="processing_foo.py"), [])
 
     def test_trf027_respects_suppression(self):
         source = """
@@ -54,4 +52,4 @@ def f(x):
     # trf-ignore: TRF027
     assert x
 """
-        self.assertEqual(self._run(mlinter.TRF027, source), [])
+        self.assertEqual(self._trf027(source), [])

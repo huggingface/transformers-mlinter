@@ -13,9 +13,7 @@
 # limitations under the License.
 
 
-from pathlib import Path
-
-from tests.rule_test_utils import RuleTestCase, mlinter, tempfile
+from tests.rule_test_utils import Path, RuleTestCase, mlinter, tempfile
 
 
 class TRF034Test(RuleTestCase):
@@ -76,7 +74,8 @@ class FooModel(FooPreTrainedModel):
             foo_dir = models_root / "foo"
             llama_dir.mkdir(parents=True)
             foo_dir.mkdir()
-            (llama_dir / "modeling_llama.py").write_text(
+            llama_path = llama_dir / "modeling_llama.py"
+            llama_path.write_text(
                 """
 class LlamaDecoderLayer(GradientCheckpointingLayer):
     pass
@@ -98,7 +97,18 @@ class FooModel(FooPreTrainedModel):
 """
             modular_path = foo_dir / "modular_foo.py"
             violations = mlinter.analyze_file(modular_path, source, enabled_rules={mlinter.TRF034})
-        self.assertEqual([violation for violation in violations if violation.rule_id == mlinter.TRF034], [])
+            self.assertEqual([violation for violation in violations if violation.rule_id == mlinter.TRF034], [])
+
+            llama_path.write_text(
+                """
+class LlamaDecoderLayer(nn.Module):
+    pass
+""",
+                encoding="utf-8",
+            )
+            violations = mlinter.analyze_file(modular_path, source, enabled_rules={mlinter.TRF034})
+
+        self.assertEqual(len([violation for violation in violations if violation.rule_id == mlinter.TRF034]), 1)
 
     def test_trf034_reports_imported_modular_layer_base_that_resolves_to_plain_module(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

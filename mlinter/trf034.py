@@ -19,7 +19,6 @@ from pathlib import Path
 
 from ._helpers import (
     Violation,
-    _base_chain_has_unresolved_import,
     _collect_class_bases,
     _has_rule_suppression,
     full_name,
@@ -33,22 +32,81 @@ CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no
 # Only the repeated per-layer blocks are in scope; a ModuleList of projections or experts is not a
 # gradient-checkpointing boundary.
 LAYER_CLASS_SUFFIXES = ("Layer", "Block")
+_MAX_INHERITANCE_HOPS = 12
 
 
-def _subclasses_gradient_checkpointing_layer(name: str, class_to_bases: dict[str, list[str]]) -> bool:
-    seen: set[str] = set()
-    stack = [name]
-    while stack:
-        current = stack.pop()
-        if current in seen:
+def _imported_classes(tree: ast.Module, file_path: Path) -> dict[str, tuple[Path, str]]:
+    imports: dict[str, tuple[Path, str]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or node.level == 0 or node.module is None:
             continue
-        seen.add(current)
-        for base in class_to_bases.get(current, []):
-            simple = base.split(".")[-1]
-            if simple == "GradientCheckpointingLayer":
-                return True
-            stack.append(simple)
-    return False
+        base_dir = file_path.parent
+        for _ in range(node.level - 1):
+            base_dir = base_dir.parent
+        imported_path = base_dir.joinpath(*node.module.split(".")).with_suffix(".py")
+        for alias in node.names:
+            imports[alias.asname or alias.name] = (imported_path, alias.name)
+    return imports
+
+
+def _parse_file(path: Path, cache: dict[Path, ast.Module | None]) -> ast.Module | None:
+    if path not in cache:
+        try:
+            cache[path] = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, SyntaxError, ValueError):
+            cache[path] = None
+    return cache[path]
+
+
+def _subclasses_gradient_checkpointing_layer(
+    name: str,
+    tree: ast.Module,
+    file_path: Path,
+    cache: dict[Path, ast.Module | None],
+    seen: set[tuple[Path, str]] | None = None,
+    hops: int = 0,
+) -> bool | None:
+    """Return True if the chain reaches GradientCheckpointingLayer, False if fully resolved, None if not."""
+    if seen is None:
+        seen = set()
+    key = (file_path, name)
+    if key in seen or hops >= _MAX_INHERITANCE_HOPS:
+        return None
+    seen.add(key)
+
+    class_to_bases = _collect_class_bases(tree)
+    imports = _imported_classes(tree, file_path)
+    if name not in class_to_bases:
+        return None
+
+    found_unknown = False
+    for base in class_to_bases[name]:
+        simple = base.split(".")[-1]
+        if simple == "GradientCheckpointingLayer":
+            return True
+        if base.startswith(("nn.", "torch.nn.")) or simple in {"Module", "object"}:
+            continue
+        if simple in class_to_bases:
+            resolved = _subclasses_gradient_checkpointing_layer(simple, tree, file_path, cache, seen, hops + 1)
+        elif simple in imports:
+            imported_path, imported_name = imports[simple]
+            imported_tree = _parse_file(imported_path, cache)
+            resolved = (
+                None
+                if imported_tree is None
+                else _subclasses_gradient_checkpointing_layer(
+                    imported_name, imported_tree, imported_path, cache, seen, hops + 1
+                )
+            )
+        else:
+            resolved = None
+
+        if resolved is True:
+            return True
+        if resolved is None:
+            found_unknown = True
+
+    return None if found_unknown else False
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
@@ -59,6 +117,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
 
     class_to_bases = _collect_class_bases(tree)
     local_classes = set(class_to_bases)
+    parsed_files: dict[Path, ast.Module | None] = {file_path: tree}
     violations: list[Violation] = []
     reported: set[str] = set()
 
@@ -78,11 +137,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                 continue
             if layer_name in reported:
                 continue
-            if _subclasses_gradient_checkpointing_layer(layer_name, class_to_bases):
-                continue
-            if _base_chain_has_unresolved_import(
-                layer_name, class_to_bases, known_external_bases={"GradientCheckpointingLayer", "Module"}
-            ):
+            inheritance_status = _subclasses_gradient_checkpointing_layer(layer_name, tree, file_path, parsed_files)
+            if inheritance_status is not False:
                 continue
             if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
                 continue

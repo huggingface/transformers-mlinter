@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import RuleTestCase, mlinter, patch
+from tests.rule_test_utils import Path, RuleTestCase, mlinter, patch
 
 
 class TRF009Test(RuleTestCase):
@@ -150,3 +150,14 @@ from ..timm_wrapper import TimmWrapperConfig
 from ..timm_wrapper.configuration_timm_wrapper import TimmWrapperConfig as Alias
 """
         self.assertEqual(self._run(mlinter.TRF009, source, file_name="configuration_foo.py"), [])
+
+    @patch("mlinter.trf009._known_model_dirs", return_value={"auto", "encoder_decoder"})
+    def test_trf009_skips_files_in_the_auto_package(self, _mock):
+        # Naming every model's classes is what the auto package is for, so its own files are not
+        # one model reaching into another.
+        source = """
+from ..encoder_decoder import EncoderDecoderConfig
+"""
+        file_path = Path("src/transformers/models/auto/tokenization_auto.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF009})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF009], [])

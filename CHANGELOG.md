@@ -50,14 +50,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   that merely reads like a model prefix (`BitsAndBytesConfig` vs the `bit` directory) is not reported, and a name
   that cannot be resolved -- outside a transformers checkout, say -- is left alone rather than guessed at. The
   relative form now also covers `from ...models.other.modeling_other import X`, which names the models package
-  on the way up. `timm_wrapper` joins `auto` as an always-exempt directory: it is the adapter that exposes any timm
+  on the way up. `timm_wrapper` joins `auto` as an always-exempt import target: it is the adapter that exposes any timm
   backbone as a transformers model, so `TimmWrapperConfig` names a shared entry point the way `AutoConfig`
-  does. Eight real cross-model imports in transformers were found by the widening, six of them in
-  `configuration_*.py` and `processing_*.py` files and two of them the `from transformers import CLIP*` form in
-  `sam3`. Requested in [#5](https://github.com/huggingface/transformers-mlinter/issues/5) and
-  [#39](https://github.com/huggingface/transformers-mlinter/issues/39). Note that `tokenization_*.py` files reach
-  the rule only once the `TRF038` tokenization work adds them to `MODELING_PATTERNS`; the prefix is listed here so
-  the two land in either order.
+  does; files inside `auto` are now skipped outright, since naming every model's classes is what that
+  package is for. Fourteen real cross-model imports in transformers were found by the widening: six in
+  `configuration_*.py` and `processing_*.py` files, six older tokenizers that subclass another model's
+  tokenizer (`bart` from `roberta`, `fnet` from `albert`, `convbert`/`distilbert`/`mobilebert`/`squeezebert`
+  from `bert`), and two the `from transformers import CLIP*` form in `sam3`. Requested in [#5](https://github.com/huggingface/transformers-mlinter/issues/5) and
+  [#39](https://github.com/huggingface/transformers-mlinter/issues/39).
 
 ### Fixed
 

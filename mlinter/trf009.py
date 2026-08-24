@@ -15,7 +15,6 @@
 """TRF009: model files should avoid importing implementation code from another model package."""
 
 import ast
-import re
 from pathlib import Path
 
 from ._helpers import MODELS_ROOT, Violation, _has_rule_suppression, _known_model_dirs, _model_dir_name
@@ -43,11 +42,9 @@ _CHECKED_PREFIXES = (
 # `AutoConfig`: it names the shared entry point, not another model's implementation.
 _SHARED_MODEL_DIRS = frozenset({"auto", "timm_wrapper"})
 
-_CLASS_DEF_RE = re.compile(r"^class (\w+)", re.MULTILINE)
-
 # Class names defined by a model directory, keyed by directory name. A lint run resolves the same
 # few directories over and over (one entry per model a file imports from), and each miss costs a
-# read of every source file in that directory, so the answers are kept for the life of the process.
+# parse of every source file in that directory, so the answers are kept for the life of the process.
 _DEFINED_CLASS_NAMES: dict[str, frozenset[str]] = {}
 
 
@@ -61,10 +58,12 @@ def _defined_class_names(model_dir: str) -> frozenset[str]:
             source_files = []
         for source_file in source_files:
             try:
-                text = source_file.read_text(encoding="utf-8")
-            except OSError:
+                module = ast.parse(source_file.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, ValueError):
+                # A directory that cannot be read or parsed resolves no names, which leaves the
+                # import unreported rather than reported on a guess.
                 continue
-            names.update(_CLASS_DEF_RE.findall(text))
+            names.update(node.name for node in module.body if isinstance(node, ast.ClassDef))
         _DEFINED_CLASS_NAMES[model_dir] = frozenset(names)
     return _DEFINED_CLASS_NAMES[model_dir]
 
@@ -120,6 +119,11 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
 
     current_model = _model_dir_name(file_path)
     if current_model is None:
+        return []
+    # The `auto` package is exempt as an importer as well as as a target: naming every model's
+    # classes is the whole job of `configuration_auto.py` and `tokenization_auto.py`, so the imports
+    # it makes are the mapping layer working as intended rather than one model reaching into another.
+    if current_model == "auto":
         return []
 
     violations: list[Violation] = []

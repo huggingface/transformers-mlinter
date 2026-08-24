@@ -198,6 +198,45 @@ def _inherits_pretrained_model(
     return False
 
 
+def _base_chain_has_unresolved_import(
+    class_name: str,
+    class_to_bases: dict[str, list[str]],
+    *,
+    known_external_bases: set[str] | None = None,
+    visiting: set[str] | None = None,
+) -> bool:
+    """Whether *class_name* inherits from a base that is not defined in this file.
+
+    Modular model files often inherit from another model's imported class. Rules that need to reason
+    about inherited methods or base-class structure should treat that as inconclusive rather than as
+    proof that the expected inherited behavior is missing.
+    """
+    if visiting is None:
+        visiting = set()
+    if known_external_bases is None:
+        known_external_bases = set()
+    if class_name in visiting:
+        return False
+    visiting.add(class_name)
+
+    for base_name in class_to_bases.get(class_name, []):
+        if base_name.startswith(("nn.", "torch.nn.")) or base_name in known_external_bases:
+            continue
+        simple_base_name = _simple_name(base_name)
+        if simple_base_name in known_external_bases:
+            continue
+        if simple_base_name not in class_to_bases:
+            return True
+        if _base_chain_has_unresolved_import(
+            simple_base_name,
+            class_to_bases,
+            known_external_bases=known_external_bases,
+            visiting=visiting,
+        ):
+            return True
+    return False
+
+
 def iter_pretrained_classes(tree: ast.Module, source_lines: list[str], rule_id: str) -> list[ast.ClassDef]:
     """Yield ClassDef nodes that inherit from PreTrainedModel (transitively), skipping suppressed ones."""
     class_to_bases = _collect_class_bases(tree)

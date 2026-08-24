@@ -17,7 +17,14 @@
 import ast
 from pathlib import Path
 
-from ._helpers import Violation, _collect_class_bases, _has_rule_suppression, full_name, is_exempt_by_cutoff
+from ._helpers import (
+    Violation,
+    _base_chain_has_unresolved_import,
+    _collect_class_bases,
+    _has_rule_suppression,
+    full_name,
+    is_exempt_by_cutoff,
+)
 
 
 RULE_ID = ""  # Set by discovery
@@ -72,6 +79,10 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
             if layer_name in reported:
                 continue
             if _subclasses_gradient_checkpointing_layer(layer_name, class_to_bases):
+                continue
+            if _base_chain_has_unresolved_import(
+                layer_name, class_to_bases, known_external_bases={"GradientCheckpointingLayer", "Module"}
+            ):
                 continue
             if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
                 continue

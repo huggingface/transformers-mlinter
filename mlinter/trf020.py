@@ -20,6 +20,8 @@ from pathlib import Path
 from ._helpers import (
     MODELS_ROOT,
     Violation,
+    _base_chain_has_unresolved_import,
+    _collect_class_bases,
     _has_rule_suppression,
     _model_dir_name,
 )
@@ -149,6 +151,25 @@ def _init_expansion_proj_names(class_node: ast.ClassDef) -> set[str]:
     return names
 
 
+def _init_self_attribute_names(class_node: ast.ClassDef) -> set[str]:
+    """Names assigned to ``self.<name>`` in ``__init__``."""
+    names: set[str] = set()
+    init = _local_method(class_node, "__init__")
+    if init is None:
+        return names
+    for stmt in ast.walk(init):
+        if isinstance(stmt, ast.Assign):
+            targets = stmt.targets
+        elif isinstance(stmt, ast.AnnAssign):
+            targets = [stmt.target]
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+                names.add(target.attr)
+    return names
+
+
 def _method_applies_projection(function_node: ast.FunctionDef, proj_names: set[str]) -> bool:
     return any(call.func.attr in proj_names for call in _self_call_nodes(function_node))
 
@@ -160,6 +181,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     if not _file_in_mla_model(file_path):
         return []
 
+    class_to_bases = _collect_class_bases(tree)
     violations: list[Violation] = []
     for node in tree.body:
         if not isinstance(node, ast.ClassDef):
@@ -210,6 +232,12 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         }
         if expansion_methods & forward_self_calls:
             continue
+
+        if _base_chain_has_unresolved_import(node.name, class_to_bases, known_external_bases={"Module"}):
+            assigned_attrs = _init_self_attribute_names(node)
+            inherited_method_calls = forward_self_calls - assigned_attrs - proj_names
+            if inherited_method_calls:
+                continue
 
         representative = sorted(proj_names)[0]
         violations.append(

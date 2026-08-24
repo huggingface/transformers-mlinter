@@ -103,6 +103,13 @@ def _delegated_attribute(function_node: ast.FunctionDef) -> str | None:
     return None
 
 
+def _contains_super_call(function_node: ast.FunctionDef) -> bool:
+    return any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "super"
+        for node in ast.walk(function_node)
+    )
+
+
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     if not file_path.name.startswith(("modeling_", "modular_")):
         return []
@@ -129,6 +136,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         methods = _class_methods(class_node)
         init_node, forward_node = methods.get("__init__"), methods.get("forward")
         if init_node is None or forward_node is None:
+            continue
+        if _contains_super_call(forward_node):
             continue
         # A class carrying anything besides __init__ and forward has behaviour of its own.
         if set(methods) - {"__init__", "forward"}:

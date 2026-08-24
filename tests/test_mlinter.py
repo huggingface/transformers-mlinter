@@ -1857,6 +1857,19 @@ class FooPreTrainedModel(LlamaPreTrainedModel):
         trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
         self.assertEqual(trf018, [])
 
+    def test_trf018_allows_unbound_pretrained_model_module_arg_in_modular(self):
+        source = """
+class FooPreTrainedModel(LlamaPreTrainedModel):
+    def _init_weights(self, module):
+        PreTrainedModel._init_weights(module)
+        if isinstance(module, FooCustomLayer):
+            module.gate.data.zero_()
+"""
+        file_path = Path("src/transformers/models/foo/modular_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
+        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        self.assertEqual(trf018, [])
+
     def test_trf018_does_not_skip_unbound_pretrained_model_call_in_non_modular(self):
         source = """
 class FooPreTrainedModel(PreTrainedModel):
@@ -2204,6 +2217,26 @@ class FooAttention(nn.Module):
         return key_states, value_states
 """
         file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
+        trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
+        self.assertEqual(trf020, [])
+
+    @patch.object(_trf020_mod, "_MLA_MODEL_DIRS", {"foo"})
+    def test_trf020_allows_inherited_expansion_method_in_modular(self):
+        source = """
+class FooAttention(DeepseekV32Attention):
+    def __init__(self, config):
+        super().__init__(config)
+        self.kv_b_proj = nn.Linear(config.kv_lora_rank, config.num_heads * config.v_head_dim, bias=False)
+        self.kv_a_proj_with_mqa = nn.Linear(config.hidden_size, self.kv_lora_rank + self.qk_rope_head_dim, bias=False)
+
+    def forward(self, hidden_states, position_embeddings):
+        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
+        k_pass, k_rot = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        key_states, value_states = self.expand_kv(k_pass, k_rot)
+        return key_states, value_states
+"""
+        file_path = Path("src/transformers/models/foo/modular_foo.py")
         violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
         trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
         self.assertEqual(trf020, [])
@@ -3090,6 +3123,18 @@ class FooBlock(nn.Module):
 """
         self.assertEqual(self._trf026(source), [])
 
+    def test_trf026_allows_wrapper_around_super_forward(self):
+        source = """
+class FooNormedEmbedding(nn.Embedding):
+    def __init__(self, num_embeddings, embedding_dim, padding_idx, norm_eps=1e-6):
+        super().__init__(num_embeddings, embedding_dim, padding_idx)
+        self.embed_norm = FooRMSNorm(eps=norm_eps, with_scale=False)
+
+    def forward(self, input_ids):
+        return self.embed_norm(super().forward(input_ids))
+"""
+        self.assertEqual(self._trf026(source), [])
+
     def test_trf026_respects_suppression(self):
         source = """
 # trf-ignore: TRF026
@@ -3420,6 +3465,22 @@ class FooModel(FooPreTrainedModel):
         self.layers = nn.ModuleList([FooDecoderLayer(config) for _ in range(2)])
 """
         self.assertEqual(self._run(mlinter.TRF034, source), [])
+
+    def test_trf034_allows_imported_modular_layer_base(self):
+        source = """
+from ..cohere2.modeling_cohere2 import Cohere2DecoderLayer
+
+
+class FooDecoderLayer(Cohere2DecoderLayer):
+    pass
+
+
+class FooModel(FooPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.layers = nn.ModuleList([FooDecoderLayer(config) for _ in range(2)])
+"""
+        self.assertEqual(self._run(mlinter.TRF034, source, file_name="modular_foo.py"), [])
 
     def test_trf034_ignores_non_layer_modulelists(self):
         source = """

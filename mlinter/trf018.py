@@ -24,7 +24,7 @@ RULE_ID = ""  # Set by discovery
 
 
 def _is_unbound_init_weights_call(node: ast.AST) -> bool:
-    """Return True for `PreTrainedModel._init_weights(self, ...)`."""
+    """Return True for modular sentinels `PreTrainedModel._init_weights(self, ...)` or `(...module)`."""
     if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
         return False
     if node.func.attr != "_init_weights":
@@ -34,7 +34,7 @@ def _is_unbound_init_weights_call(node: ast.AST) -> bool:
     if not node.args:
         return False
     first = node.args[0]
-    return isinstance(first, ast.Name) and first.id == "self"
+    return isinstance(first, ast.Name) and first.id in {"self", "module"}
 
 
 def _is_modular_delete_sentinel(function_node: ast.FunctionDef) -> bool:

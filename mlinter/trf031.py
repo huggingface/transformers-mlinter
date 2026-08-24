@@ -35,6 +35,40 @@ def _is_dataclass(class_node: ast.ClassDef) -> bool:
     return False
 
 
+def _annotation_name(annotation: ast.expr) -> str | None:
+    target = annotation.value if isinstance(annotation, ast.Subscript) else annotation
+    try:
+        return full_name(target).split(".")[-1]
+    except ValueError:
+        return None
+
+
+def _has_dataclass_default(value: ast.expr | None) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, ast.Call):
+        return True
+    try:
+        func_name = full_name(value.func).split(".")[-1]
+    except ValueError:
+        return True
+    if func_name != "field":
+        return True
+    return any(keyword.arg in {"default", "default_factory"} for keyword in value.keywords)
+
+
+def _required_dataclass_field_count(class_node: ast.ClassDef) -> int:
+    count = 0
+    for item in class_node.body:
+        if not isinstance(item, ast.AnnAssign) or not isinstance(item.target, ast.Name):
+            continue
+        if _annotation_name(item.annotation) == "ClassVar":
+            continue
+        if not _has_dataclass_default(item.value):
+            count += 1
+    return count
+
+
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     if not file_path.name.startswith(("modeling_", "modular_")):
         return []
@@ -54,6 +88,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         # Any base carrying `Output` in its name is a ModelOutput subclass: ModelOutput itself, one of
         # the BaseModelOutputWith* variants, or another model's output class.
         if any("Output" in name for name in base_names):
+            continue
+        if _required_dataclass_field_count(class_node) >= 2:
             continue
         if _has_rule_suppression(source_lines, RULE_ID, class_node.lineno):
             continue

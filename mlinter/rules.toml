@@ -546,21 +546,21 @@ diff = '''
 '''
 
 [rules.TRF031]
-description = "Dataclasses in modeling files must inherit ModelOutput."
+description = "Output-like dataclasses in modeling files must inherit ModelOutput."
 default_enabled = true
 allowlist_models = []
 cutoff_date = "2026-06-20"
 
 [rules.TRF031.explanation]
-what_it_does = "In modeling_*.py and modular_*.py, flags a top-level `@dataclass` class whose bases do not include something ending in `Output`."
-why_bad = "A plain dataclass does not index like a tuple, does not survive `return_dict=False`, and is invisible to @auto_docstring, so its fields never reach the generated API docs. Inheriting ModelOutput gets all three for free."
+what_it_does = "In modeling_*.py and modular_*.py, flags a top-level `@dataclass` class whose bases do not include something ending in `Output`, unless it has two or more mandatory dataclass fields. Dataclasses with multiple mandatory fields are treated as internal argument bundles, because `ModelOutput` rejects them at runtime."
+why_bad = "A plain output dataclass does not index like a tuple, does not survive `return_dict=False`, and is invisible to @auto_docstring, so its fields never reach the generated API docs. Inheriting ModelOutput gets all three for free."
 diff = '''
  @auto_docstring
  @dataclass
 -class AcmeStructureOutput:
 +class AcmeStructureOutput(ModelOutput):
      positions: torch.Tensor
-     confidence: torch.Tensor
+     confidence: torch.Tensor = None
 '''
 
 [rules.TRF032]

@@ -98,6 +98,15 @@ Then validate only that config class.
 
 Some config classes inherit from another model config rather than directly from `PreTrainedConfig`. If the base class is not `PreTrainedConfig` or `PretrainedConfig` and still ends with `Config`, assume the field may be inherited and skip the violation unless the rule specifically needs stricter handling.
 
+### Modular imported bases
+
+`modular_*.py` files commonly define classes that inherit from another model's imported class, and
+`analyze_file` only passes the AST for the file currently being linted. If a rule depends on inherited
+methods or a full base chain, an imported base is unknown, not evidence that the expected behavior is
+missing. Prefer resolving the generated `modeling_*.py` when the rule needs the flattened class, or
+skip/report nothing when `_base_chain_has_unresolved_import(...)` says the local AST is inconclusive.
+Always add a regression test with a `modular_*.py` class inheriting from an imported base.
+
 ### `tie_word_embeddings` is not in `PreTrainedConfig`
 
 The base `PreTrainedConfig` does not define `tie_word_embeddings`. When a rule needs it, the model config must declare it explicitly, either as a class attribute or through `self.tie_word_embeddings = ...` in initialization code.

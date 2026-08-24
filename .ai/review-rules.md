@@ -39,6 +39,7 @@ These cases regularly cause false positives. If the diff adds or modifies a cros
 - **Multi-config directories**: a model dir can contain several `configuration_*.py` files. Match by suffix first (`modeling_foo_text.py` ↔ `configuration_foo_text.py`); only fall back to a generic pick when there is no suffix match.
 - **Multi-class configuration files**: one `configuration_*.py` may define multiple `*Config` classes. Resolve the modeling class's target via its `config_class` attribute (following local inheritance through `*PreTrainedModel`) before validating, instead of grabbing the first `*Config` class in the file.
 - **Inherited configs**: a config class whose base is another `*Config` (not `PreTrainedConfig` / `PretrainedConfig`) may inherit the field being checked — the rule should typically skip rather than flag.
+- **Modular imported bases**: a `modular_*.py` class often inherits from another model's imported class, so the local AST cannot see inherited methods or base classes. If a rule reasons about inherited structure and does not skip/resolve unknown imported bases (for example via `_base_chain_has_unresolved_import` or by inspecting the generated `modeling_*.py`), ask for a regression test and a false-positive guard.
 - **`tie_word_embeddings`**: not declared on `PreTrainedConfig`. A rule that requires it must accept either a class attribute or a `self.tie_word_embeddings = …` assignment in `__init__`.
 
 ### 4. Rules TOML schema (`mlinter/rules.toml`)

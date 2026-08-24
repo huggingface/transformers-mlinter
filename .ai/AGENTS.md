@@ -38,3 +38,6 @@ Run `make format` or `make lint` and `make test` before wrapping up a change.
 - Rule modules must expose `check(tree, file_path, source_lines) -> list[Violation]`.
 - Rule specs use `what_it_does`, `why_bad`, and `diff`; keep examples in a single diff block.
 - Cross-file rules may need to read companion `configuration_*.py` files from disk.
+- Modular files often inherit from classes imported from another model. If a rule depends on inherited
+  methods or base-class structure, treat an unresolved imported base as inconclusive (usually skip or
+  inspect the generated `modeling_*.py`) instead of reporting that inherited behavior is absent.

@@ -560,7 +560,7 @@ diff = '''
 -class AcmeStructureOutput:
 +class AcmeStructureOutput(ModelOutput):
      positions: torch.Tensor
-     confidence: torch.Tensor = None
+     confidence: Optional[torch.Tensor] = None
 '''
 
 [rules.TRF032]

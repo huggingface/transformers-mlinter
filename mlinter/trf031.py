@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF031: Dataclasses in modeling files must inherit ModelOutput."""
+"""TRF031: Output-like dataclasses in modeling files must inherit ModelOutput."""
 
 import ast
 from pathlib import Path

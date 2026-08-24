@@ -48,7 +48,29 @@ These cases regularly cause false positives. If the diff adds or modifies a cros
 - **Diff block**: the `diff` field is a single triple-quoted block formatted as a unified diff (lines starting with ` `, `-`, `+`). Keep examples in one diff block — do not split into multiple snippets.
 - **TOML ↔ module sync**: a new `[rules.TRFNNN]` entry must have a matching `mlinter/trfNNN.py` module, and vice versa. Flag mismatches.
 
-### 5. Tests (`tests/test_mlinter.py`)
+### 5. Duplicate rule coverage
+
+A redundant rule is the most expensive thing to catch late: a `TRFNNN` is permanent and is never reused, so
+a rule that restates an existing one cannot be quietly dropped afterwards.
+
+- **Read `mlinter/rules.toml` in full before commenting on a PR that adds a rule.** Every existing rule's
+  `description` and `[rules.TRFNNN.explanation]` live in that one file, so the comparison needs no other
+  source. The diff only shows the section being added — fetch the whole file to see what is already there.
+- **Compare on the pattern flagged, not on the wording.** Two rules can describe the same AST check in
+  different vocabulary. Work out what code the new rule rejects, then look for an existing rule that
+  rejects the same code: same call, attribute or config field, same file glob (`modeling_*.py`,
+  `modular_*.py`, `configuration_*.py`), same class of construct.
+- **Partial overlap counts.** A new rule that is a narrower or stricter version of an existing one — it
+  flags a subset of the same constructs, or the same construct in one more place — usually belongs in that
+  rule as an extra branch plus a test, not under a new id. Name the rule it overlaps and point at
+  `.ai/skills/add-mlinter-rule/SKILL.md` step 1, which asks the author to make this check first.
+- **Check the tombstones too.** A `deprecated = true` entry is a rule that was retired for a reason given
+  in its `description`, usually false positives. A new rule flagging that pattern again needs the PR body
+  to say what changed.
+- **Overlap is a question, not a rejection.** Comment once, naming the existing id, and ask the author why
+  both should exist; the merge decision is the human reviewer's. If nothing overlaps, say nothing.
+
+### 6. Tests (`tests/test_mlinter.py`)
 
 - **New rule without tests**: every new TRF rule needs at least one positive (violation expected) and one negative (no violation) test.
 - **Cross-file rules need a real filesystem**: tests for cross-file rules must use `tempfile.TemporaryDirectory` so the rule can read the sibling file. In-memory source strings only exercise the single-file path.
@@ -56,13 +78,13 @@ These cases regularly cause false positives. If the diff adds or modifies a cros
 - **Bug fix without a regression test** reproducing the original failure.
 - **Tests that don't exercise the changed path**: assertions that pass without the new code change pull their weight only for documentation. Flag them.
 
-### 6. Correctness and safety
+### 7. Correctness and safety
 
 - **Backward-compatible CLI / public API**: changes to `mlinter` CLI flags, `mlinter.analyze_file`, `mlinter.TRF_RULES`, or anything re-exported from `mlinter/__init__.py` need a deprecation note or a CHANGELOG entry.
 - **Cache invalidation**: changes to rule logic, the rule registry, or the rule-spec hash must keep the content hash sound — stale cache hits across rule changes silently mask regressions.
 - **Security**: `eval` / `exec` on user input, `pickle.load` on untrusted files, `shell=True` with interpolated strings, `requests` without timeouts, hardcoded tokens, logs that could leak secrets. (Unlikely in this repo, but flag if seen.)
 
-### 7. Documentation
+### 8. Documentation
 
 - **A new rule needs no doc page.** The docs site generates one per rule from `rules.toml` at build
   time (`scripts/build_docs.py`), and `docs/rules/` is git-ignored. Do not ask for a doc page, and
@@ -76,7 +98,7 @@ These cases regularly cause false positives. If the diff adds or modifies a cros
 - New rule or notable bugfix without a `CHANGELOG.md` entry under the appropriate version.
 - New public symbol (function, class, CLI flag) without a docstring.
 
-### 8. Agent-written PR smells
+### 9. Agent-written PR smells
 
 - Bug fix without a reproducer or diagnosis in the PR body.
 - Three new helper functions + verbose multi-line comments for what should be a one-line fix.
@@ -105,5 +127,6 @@ Do not repeat what CI already reports. Do not restate what the PR description al
 ## Out of scope for this pass
 
 - Running tests, `make` targets, or the linter against real models — you cannot execute code.
-- Judging whether the *concept* of a new rule is desirable — defer to the human reviewer.
+- Judging whether the *concept* of a new rule is desirable — defer to the human reviewer. Flagging that
+  a proposed rule overlaps one already in `rules.toml` is a different thing, and is in scope (§5).
 - Merge/close decisions.

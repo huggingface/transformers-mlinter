@@ -121,17 +121,19 @@ diff = '''
 '''
 
 [rules.TRF009]
-description = "modeling_<name>.py should avoid importing implementation code from another model package."
+description = "No file in a model directory may import implementation code from another model package."
 default_enabled = true
 allowlist_models = ["dpr", "maskformer", "sam3_video", "vision_text_dual_encoder"]
 
 [rules.TRF009.explanation]
-what_it_does = "Checks modeling files for cross-model imports such as transformers.models.other_model.* or from ..other_model.* imports."
-why_bad = "Cross-model implementation imports violate the single-file policy and make model behavior harder to inspect and maintain."
+what_it_does = "Checks every file in a model directory -- modeling_*.py, configuration_*.py, processing_*.py, image_processing_*.py, video_processing_*.py, feature_extraction_*.py, tokenization_*.py -- for imports that reach into another model's package. `modular_*.py` is exempt, and only it: building on another model's classes is what a modular file is for, and the converter flattens those imports away in the file it generates. Three import forms are recognised. The package path, `from transformers.models.other.modeling_other import X` or `import transformers.models.other...`. The relative path, `from ..other.configuration_other import X`, including the longer `from ...models.other.modeling_other import X` that names the models package on the way. And the public API, `from transformers import OtherModel`, which reaches the same implementation without naming its package at all: since only the class name is given, the owning directory is recovered from it (transformers names a model's classes after its directory, `clip` -> `CLIPModel`, with the casing of the prefix left to the author, so the match is made on lowercased, underscore-stripped text and the longest matching directory wins), then confirmed against the classes that directory really defines. That confirmation is what keeps `from transformers import BitsAndBytesConfig` -- a shared class that merely starts like the `bit` directory -- out of the results, and it also means a name the linter cannot resolve is left alone rather than guessed at: outside a transformers checkout there are no directories to match against, so the public-API form goes unchecked there. Two directories are always exempt, as the shared way in rather than another model's implementation: `auto`, which holds the mappings a composite model resolves its sub-models with, and `timm_wrapper`, the adapter that exposes any timm backbone as a transformers model, so `TimmWrapperConfig` is of a kind with `AutoConfig`. So is the model's own directory: `from transformers import UdopConfig` inside models/udop is its own code."
+why_bad = "One model, one definition: a reader of modeling_acme.py should find the whole of Acme's behavior in Acme's own files, and a change to Llama should not be able to silently change Acme. Cross-model imports break both, and they do it in every file kind, not just the modeling one -- a configuration_*.py that imports another model's config, or a processing_*.py that subclasses another model's processor, couples the two models just as tightly. Composite models reach their sub-configs through AutoConfig and CONFIG_MAPPING instead, and a modular file is the supported way to build on another model's code."
 diff = '''
 -from transformers.models.llama.modeling_llama import LlamaAttention
-+# Keep implementation local to this file.
-+# If reusing code, copy it with a # Copied from comment.
+-from transformers import CLIPTextModelWithProjection
++# Keep implementation local to this model's own files.
++# To build on another model, write modular_acme.py; to reuse a snippet,
++# copy it with a # Copied from comment.
 '''
 
 [rules.TRF010]

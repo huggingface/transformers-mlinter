@@ -37,6 +37,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `selected_experts` and `routing_weights` are accepted, and inherited `forward` methods are resolved.
   `llama4` is allowlisted for now.
 
+### Changed
+
+- Widened `TRF009` on both axes it was missing. It now runs on every file in a model directory --
+  `configuration_*.py`, `processing_*.py`, `image_processing_*.py`, `video_processing_*.py`,
+  `feature_extraction_*.py` and `tokenization_*.py` as well as `modeling_*.py` -- since a config that imports
+  another model's config couples the two models just as tightly as a modeling file that does; `modular_*.py`
+  stays exempt, and is now the only exemption. It also recognises the public-API form,
+  `from transformers import CLIPTextModelWithProjection`, which reached another model's implementation without
+  naming its package and so went unreported. Because that form gives only a class name, the owning directory is
+  recovered from the name and then confirmed against the classes that directory really defines, so a shared class
+  that merely reads like a model prefix (`BitsAndBytesConfig` vs the `bit` directory) is not reported, and a name
+  that cannot be resolved -- outside a transformers checkout, say -- is left alone rather than guessed at. The
+  relative form now also covers `from ...models.other.modeling_other import X`, which names the models package
+  on the way up. `timm_wrapper` joins `auto` as an always-exempt directory: it is the adapter that exposes any timm
+  backbone as a transformers model, so `TimmWrapperConfig` names a shared entry point the way `AutoConfig`
+  does. Eight real cross-model imports in transformers were found by the widening, six of them in
+  `configuration_*.py` and `processing_*.py` files and two of them the `from transformers import CLIP*` form in
+  `sam3`. Requested in [#5](https://github.com/huggingface/transformers-mlinter/issues/5) and
+  [#39](https://github.com/huggingface/transformers-mlinter/issues/39). Note that `tokenization_*.py` files reach
+  the rule only once the `TRF038` tokenization work adds them to `MODELING_PATTERNS`; the prefix is listed here so
+  the two land in either order.
+
 ### Fixed
 
 - A retired rule keeps its page on the docs site instead of disappearing from it. `TRF054` vanished

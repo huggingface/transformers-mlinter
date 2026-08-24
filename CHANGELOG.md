@@ -18,6 +18,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   allowlisted pending conversion of their two remaining calls. Requested in
   [huggingface/transformers#47722](https://github.com/huggingface/transformers/pull/47722).
 
+- Added `TRF059`, which checks that a routed `*Experts` class in a model whose tensor-parallel plan assigns
+  `moe_tp_experts` takes hidden states, top-k indices and top-k routing weights as the first three positional
+  arguments of its `forward`. `MoeExpertsParallel` applies a gradient transform to positional argument 3, so a
+  different signature silently transforms the wrong tensor or none at all. Common aliases such as
+  `selected_experts` and `routing_weights` are accepted, and inherited `forward` methods are resolved.
+  `llama4` is allowlisted for now.
+
 ### Fixed
 
 - A retired rule keeps its page on the docs site instead of disappearing from it. `TRF054` vanished
@@ -245,8 +252,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `ModelOutput` subclasses, image processors and `ProcessorMixin` subclasses, and on their public methods: `forward`,
   `get_image_features`, `get_video_features`, `get_audio_features`, `get_text_features`, `preprocess` and `__call__`.
   A class or method in a `modular_*.py` file is checked against the files generated from it.
-
-- `TRF059` checks that routed Experts modules selected by `moe_tp_experts` expose hidden states, top-k indices and top-k routing weights as their first three positional `forward` arguments.
 
 ### Improved
 

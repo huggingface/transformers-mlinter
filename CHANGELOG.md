@@ -17,7 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   gained the matching class-name mapping, so `XxxTokenizer` / `XxxTokenizerFast` defined in a modular file also
   ask for a tokenizer test. Ships with `tokenization_*.py` added to `MODELING_PATTERNS`, which widens discovery
   for every rule -- all other rules gate on the file-name prefix or on AST content, and a full run over
-  transformers confirmed the widening adds no findings outside `TRF038`. Requested in
+  transformers confirmed the widening adds no findings outside `TRF038`. The violation message now follows the
+  kind of test file that is missing, asking for a small hand-written vocabulary rather than a dummy config and
+  random weights when the gap is a tokenizer test. Requested in
   [huggingface/transformers-mlinter#23](https://github.com/huggingface/transformers-mlinter/issues/23).
 - Added `TRF058`, which flags `register_buffer("<name>", ...)` calls in `modeling_*.py` and `modular_*.py` and asks for
   `<name> = nn.Buffer(...)` instead. Since torch>=2.5 a buffer can be declared by plain attribute assignment, the same

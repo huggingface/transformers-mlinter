@@ -122,6 +122,14 @@ class FooVideoProcessor(BaseVideoProcessor):
         self.assertEqual(len(violations), 1)
         self.assertIn("test_tokenization_foo.py", violations[0].message)
 
+    def test_trf038_message_asks_for_the_test_the_missing_file_kind_needs(self):
+        # A model is exercised on a dummy config; a tokenizer needs something to tokenize against,
+        # so the advice has to follow the kind of test file that is missing.
+        self.assertIn("dummy config", self.check_trf038("modeling_foo.py")[0].message)
+        tokenizer_message = self.check_trf038("tokenization_foo.py", source="class FooTokenizer: ...\n")[0].message
+        self.assertIn("hand-written vocabulary", tokenizer_message)
+        self.assertNotIn("dummy config", tokenizer_message)
+
     def test_trf038_fast_tokenizer_shares_the_slow_test_file(self):
         # transformers ships no test_tokenization_*_fast.py: the fast tokenizer is exercised by the
         # same test file as its slow counterpart, so an existing one satisfies both files.

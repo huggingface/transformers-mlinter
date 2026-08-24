@@ -13,7 +13,8 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter, patch
+from mlinter import trf009 as _trf009_mod
+from tests.rule_test_utils import Path, RuleTestCase, mlinter, patch, tempfile
 
 
 class TRF009Test(RuleTestCase):
@@ -161,3 +162,24 @@ from ..encoder_decoder import EncoderDecoderConfig
         file_path = Path("src/transformers/models/auto/tokenization_auto.py")
         violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF009})
         self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF009], [])
+
+    @patch("mlinter.trf009._known_model_dirs", return_value={"foo", "clip"})
+    def test_trf009_directory_scan_is_cached_per_path_not_per_name(self, _mock):
+        # The scan of a model directory is memoized for the life of the process, and MODELS_ROOT is
+        # not a constant: tests point it at temporary trees. Two roots that both hold a `clip`
+        # directory must not answer each other's lookups.
+        self.addCleanup(_trf009_mod._reset_defined_class_names)
+        source = "from transformers import ClipModel\n"
+        results = []
+        with tempfile.TemporaryDirectory() as defines_it, tempfile.TemporaryDirectory() as does_not:
+            for root, body in ((defines_it, "class ClipModel: ...\n"), (does_not, "class Unrelated: ...\n")):
+                (Path(root) / "clip").mkdir()
+                (Path(root) / "clip" / "modeling_clip.py").write_text(body, encoding="utf-8")
+            for root in (defines_it, does_not):
+                with patch.object(_trf009_mod, "MODELS_ROOT", Path(root)):
+                    results.append(self._run(mlinter.TRF009, source))
+
+        self.assertEqual(len(results[0]), 1)
+        self.assertIn("`clip`", results[0][0].message)
+        # The second root's `clip` does not define ClipModel, so nothing is reported there.
+        self.assertEqual(results[1], [])

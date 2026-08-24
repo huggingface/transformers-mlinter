@@ -49,18 +49,29 @@ _CHECKED_PREFIXES = (
 # `AutoConfig`: it names the shared entry point, not another model's implementation.
 _SHARED_MODEL_DIRS = frozenset({"auto", "timm_wrapper"})
 
-# Class names defined by a model directory, keyed by directory name. A lint run resolves the same
+# Class names defined by a model directory, keyed by its resolved path. A lint run resolves the same
 # few directories over and over (one entry per model a file imports from), and each miss costs a
 # parse of every source file in that directory, so the answers are kept for the life of the process.
-_DEFINED_CLASS_NAMES: dict[str, frozenset[str]] = {}
+# The key is the path rather than the directory name because `MODELS_ROOT` is not a constant in
+# practice: a test points it at a temporary tree, and a caller using mlinter as a library can change
+# working directory between runs. Two different roots that both hold a `clip` directory must not
+# answer each other's lookups, so `_reset_defined_class_names` exists for the remaining case, where
+# the contents behind one path change while the process lives.
+_DEFINED_CLASS_NAMES: dict[Path, frozenset[str]] = {}
+
+
+def _reset_defined_class_names() -> None:
+    """Drop the memoized directory scans, for a caller that has changed what is on disk."""
+    _DEFINED_CLASS_NAMES.clear()
 
 
 def _defined_class_names(model_dir: str) -> frozenset[str]:
     """Every class name defined at module level by the sources in `MODELS_ROOT/model_dir`."""
-    if model_dir not in _DEFINED_CLASS_NAMES:
+    directory = (MODELS_ROOT / model_dir).resolve()
+    if directory not in _DEFINED_CLASS_NAMES:
         names: set[str] = set()
         try:
-            source_files = sorted((MODELS_ROOT / model_dir).glob("*.py"))
+            source_files = sorted(directory.glob("*.py"))
         except OSError:
             source_files = []
         for source_file in source_files:
@@ -71,8 +82,8 @@ def _defined_class_names(model_dir: str) -> frozenset[str]:
                 # import unreported rather than reported on a guess.
                 continue
             names.update(node.name for node in module.body if isinstance(node, ast.ClassDef))
-        _DEFINED_CLASS_NAMES[model_dir] = frozenset(names)
-    return _DEFINED_CLASS_NAMES[model_dir]
+        _DEFINED_CLASS_NAMES[directory] = frozenset(names)
+    return _DEFINED_CLASS_NAMES[directory]
 
 
 def _model_dir_defining(name: str, known_models: set[str]) -> str | None:

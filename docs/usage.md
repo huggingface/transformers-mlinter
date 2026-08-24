@@ -52,7 +52,7 @@ mlinter src/transformers/models/llama tests/models/llama
 
 A directory is searched recursively for model integration files (`modeling_*.py`, `modular_*.py`,
 `configuration_*.py`, `processing_*.py`, `image_processing_*.py`, `video_processing_*.py`,
-`feature_extraction_*.py`, `test_tokenization_*.py`); a file named explicitly is checked as given.
+`feature_extraction_*.py`, `tokenization_*.py`, `test_tokenization_*.py`); a file named explicitly is checked as given.
 Since the search is recursive and takes several paths at once, the layout does not matter: a GitHub
 project that keeps its model files in some directory of its own is checked by naming that directory,
 or by naming each one when they are scattered. Rules gate on the file name, so a file named something

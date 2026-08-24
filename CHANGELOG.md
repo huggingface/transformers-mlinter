@@ -9,6 +9,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Extended `TRF038` to `tokenization_*.py`: a tokenizer source file now needs a matching
+  `tests/models/<model>/test_tokenization_*.py`, closing the last model-directory file type the rule did not
+  cover. `tokenization_<name>_fast.py` maps to `test_tokenization_<name>.py` rather than a fast test file of its
+  own, since that is where a fast tokenizer is exercised, and a `tokenization_utils*.py` helper module (such as
+  `roformer/tokenization_utils.py`, which holds a Jieba pre-tokenizer) owns no test file. `modular_*.py` files
+  gained the matching class-name mapping, so `XxxTokenizer` / `XxxTokenizerFast` defined in a modular file also
+  ask for a tokenizer test. Ships with `tokenization_*.py` added to `MODELING_PATTERNS`, which widens discovery
+  for every rule -- all other rules gate on the file-name prefix or on AST content, and a full run over
+  transformers confirmed the widening adds no findings outside `TRF038`. Requested in
+  [huggingface/transformers-mlinter#23](https://github.com/huggingface/transformers-mlinter/issues/23).
 - Added `TRF058`, which flags `register_buffer("<name>", ...)` calls in `modeling_*.py` and `modular_*.py` and asks for
   `<name> = nn.Buffer(...)` instead. Since torch>=2.5 a buffer can be declared by plain attribute assignment, the same
   way `nn.Parameter` is, and a buffer that is an attribute can be inherited and tweaked in a modular file instead of

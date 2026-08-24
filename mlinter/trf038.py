@@ -34,7 +34,13 @@ _TEST_PREFIX_BY_SOURCE_PREFIX = {
     "image_processing_": "test_image_processing_",
     "video_processing_": "test_video_processing_",
     "feature_extraction_": "test_feature_extraction_",
+    "tokenization_": "test_tokenization_",
 }
+
+# Tokenizer helper modules that sit in a model directory without defining a tokenizer of their own
+# (e.g. `roformer/tokenization_utils.py`, which holds a Jieba pre-tokenizer). They are exercised
+# through the tokenizer that uses them, so they own no test file.
+_TOKENIZATION_HELPER_STEM = "tokenization_utils"
 
 # Used to infer which tests are needed for modular's content
 _CLASS_SUFFIX_TEST_PREFIX = (
@@ -42,6 +48,8 @@ _CLASS_SUFFIX_TEST_PREFIX = (
     ("ImageProcessor", "test_image_processing_"),
     ("VideoProcessor", "test_video_processing_"),
     ("FeatureExtractor", "test_feature_extraction_"),
+    ("TokenizerFast", "test_tokenization_"),
+    ("Tokenizer", "test_tokenization_"),
     ("Processor", "test_processing_"),
     ("PreTrainedModel", "test_modeling_"),
     ("Model", "test_modeling_"),
@@ -92,6 +100,13 @@ def _expected_test_file(file_path: Path) -> Path | None:
     source_prefix, test_prefix = match
 
     suffix = stem[len(source_prefix) :]
+    if source_prefix == "tokenization_":
+        if stem == _TOKENIZATION_HELPER_STEM or stem.startswith(f"{_TOKENIZATION_HELPER_STEM}_"):
+            return None
+        # A `tokenization_<name>_fast.py` file is covered by the same `test_tokenization_<name>.py`
+        # as its slow counterpart -- transformers ships no `test_tokenization_*_fast.py` file -- so
+        # the `_fast` marker is dropped before the expected path is built.
+        suffix = suffix.removesuffix("_fast")
     return TESTS_ROOT / model_dir / f"{test_prefix}{suffix}.py"
 
 

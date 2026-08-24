@@ -116,3 +116,54 @@ class FooVideoProcessor(BaseVideoProcessor):
 
         self.assertEqual(len(violations), 1)
         self.assertIn("test_video_processing_foo.py", violations[0].message)
+
+    def test_trf038_maps_tokenization_files(self):
+        violations = self.check_trf038("tokenization_foo.py", source="class FooTokenizer: ...\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("test_tokenization_foo.py", violations[0].message)
+
+    def test_trf038_fast_tokenizer_shares_the_slow_test_file(self):
+        # transformers ships no test_tokenization_*_fast.py: the fast tokenizer is exercised by the
+        # same test file as its slow counterpart, so an existing one satisfies both files.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tests_root = Path(tmp_dir) / "tests" / "models"
+            (tests_root / "foo").mkdir(parents=True)
+            (tests_root / "foo" / "test_tokenization_foo.py").write_text(
+                "class FooTokenizationTest: ...\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                self.check_trf038(
+                    "tokenization_foo_fast.py",
+                    tests_root=tests_root,
+                    source="class FooTokenizerFast: ...\n",
+                ),
+                [],
+            )
+
+    def test_trf038_fast_tokenizer_reports_the_slow_test_file_when_missing(self):
+        violations = self.check_trf038("tokenization_foo_fast.py", source="class FooTokenizerFast: ...\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("test_tokenization_foo.py", violations[0].message)
+        # ...and not a nonexistent `test_tokenization_foo_fast.py`.
+        self.assertNotIn("test_tokenization_foo_fast.py", violations[0].message)
+
+    def test_trf038_ignores_tokenization_helper_modules(self):
+        # roformer/tokenization_utils.py holds a pre-tokenizer helper, not a tokenizer of its own.
+        self.assertEqual(self.check_trf038("tokenization_utils.py", source="class JiebaPreTokenizer: ...\n"), [])
+        self.assertEqual(self.check_trf038("tokenization_utils_base.py", source="class Helper: ...\n"), [])
+
+    def test_trf038_modular_infers_tokenization_from_class_names(self):
+        source = """
+class FooTokenizer(PreTrainedTokenizer):
+    pass
+
+class FooTokenizerFast(PreTrainedTokenizerFast):
+    pass
+
+class FooConfig(PretrainedConfig):
+    pass
+"""
+        violations = self.check_trf038("modular_foo.py", source=source)
+        # Both tokenizer classes map to the one shared test file, so it is reported once.
+        self.assertEqual(len(violations), 1)
+        self.assertIn("test_tokenization_foo.py", violations[0].message)

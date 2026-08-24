@@ -26,9 +26,7 @@ class FooModel(FooPreTrainedModel):
         self.sequence_length = hidden_states.shape[1]
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF046})
-        trf046 = [v for v in violations if v.rule_id == mlinter.TRF046]
+        trf046 = self._run(mlinter.TRF046, source)
         self.assertEqual(len(trf046), 1)
         self.assertIn("FooModel.forward writes self.sequence_length", trf046[0].message)
 

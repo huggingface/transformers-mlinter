@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF018Test(RuleTestCase):
@@ -26,9 +26,7 @@ class FooPreTrainedModel(PreTrainedModel):
         if isinstance(module, FooCustomLayer):
             module.gate.data.zero_()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source)
         self.assertEqual(len(trf018), 1)
         self.assertIn("does not call `super()._init_weights", trf018[0].message)
 
@@ -40,9 +38,7 @@ class FooPreTrainedModel(PreTrainedModel):
         if isinstance(module, FooCustomLayer):
             module.gate.data.zero_()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source)
         self.assertEqual(trf018, [])
 
     def test_trf018_allows_unbound_pretrained_model_call_in_modular(self):
@@ -53,9 +49,7 @@ class FooPreTrainedModel(LlamaPreTrainedModel):
         if isinstance(module, FooCustomLayer):
             module.gate.data.zero_()
 """
-        file_path = Path("src/transformers/models/foo/modular_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source, file_name="modular_foo.py")
         self.assertEqual(trf018, [])
 
     def test_trf018_allows_unbound_pretrained_model_module_arg_in_modular(self):
@@ -66,9 +60,7 @@ class FooPreTrainedModel(LlamaPreTrainedModel):
         if isinstance(module, FooCustomLayer):
             module.gate.data.zero_()
 """
-        file_path = Path("src/transformers/models/foo/modular_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source, file_name="modular_foo.py")
         self.assertEqual(trf018, [])
 
     def test_trf018_does_not_skip_unbound_pretrained_model_call_in_non_modular(self):
@@ -79,9 +71,7 @@ class FooPreTrainedModel(PreTrainedModel):
         if isinstance(module, FooCustomLayer):
             module.gate.data.zero_()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source)
         self.assertEqual(len(trf018), 1)
 
     def test_trf018_allows_attribute_error_sentinel_in_modular(self):
@@ -90,9 +80,7 @@ class FooPreTrainedModel(LlamaPreTrainedModel):
     def _init_weights(self, module):
         raise AttributeError("Not needed")
 """
-        file_path = Path("src/transformers/models/foo/modular_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source, file_name="modular_foo.py")
         self.assertEqual(trf018, [])
 
     def test_trf018_does_not_skip_attribute_error_in_non_modular(self):
@@ -101,9 +89,7 @@ class FooPreTrainedModel(PreTrainedModel):
     def _init_weights(self, module):
         raise AttributeError("Not needed")
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source)
         self.assertEqual(len(trf018), 1)
 
     def test_trf018_respects_inline_suppression(self):
@@ -114,9 +100,7 @@ class FooPreTrainedModel(PreTrainedModel):
         if isinstance(module, FooCustomLayer):
             module.gate.data.zero_()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source)
         self.assertEqual(trf018, [])
 
     def test_trf018_suppression_above_decorator(self):
@@ -128,9 +112,7 @@ class FooPreTrainedModel(PreTrainedModel):
         if isinstance(module, FooCustomLayer):
             module.gate.data.zero_()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source)
         self.assertEqual(trf018, [])
 
     def test_trf018_skips_non_pretrained_classes(self):
@@ -140,7 +122,5 @@ class FooHelper:
         if isinstance(module, FooCustomLayer):
             module.gate.data.zero_()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF018})
-        trf018 = [v for v in violations if v.rule_id == mlinter.TRF018]
+        trf018 = self._run(mlinter.TRF018, source)
         self.assertEqual(trf018, [])

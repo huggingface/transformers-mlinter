@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF013Test(RuleTestCase):
@@ -29,9 +29,7 @@ class FooModel(FooPreTrainedModel):
         super().__init__(config)
         self.proj = None
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF013})
-        trf013 = [v for v in violations if v.rule_id == mlinter.TRF013]
+        trf013 = self._run(mlinter.TRF013, source)
         self.assertEqual(len(trf013), 1)
         self.assertIn("does not call `self.post_init`", trf013[0].message)
 
@@ -46,7 +44,5 @@ class FooModel(FooPreTrainedModel):
         self.proj = None
         self.post_init()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF013})
-        trf013 = [v for v in violations if v.rule_id == mlinter.TRF013]
+        trf013 = self._run(mlinter.TRF013, source)
         self.assertEqual(trf013, [])

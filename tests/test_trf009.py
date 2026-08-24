@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter, patch
+from tests.rule_test_utils import RuleTestCase, mlinter, patch
 
 
 class TRF009Test(RuleTestCase):
@@ -24,9 +24,7 @@ class TRF009Test(RuleTestCase):
         source = """
 from transformers.models.llama.modeling_llama import LlamaAttention
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF009})
-        trf009 = [v for v in violations if v.rule_id == mlinter.TRF009]
+        trf009 = self._run(mlinter.TRF009, source)
         self.assertEqual(len(trf009), 1)
         self.assertIn("imports implementation code from `llama`", trf009[0].message)
 
@@ -36,9 +34,7 @@ from transformers.models.llama.modeling_llama import LlamaAttention
 from .configuration_foo import FooConfig
 from transformers.models.foo.configuration_foo import FooConfig as FooConfigAlias
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF009})
-        trf009 = [v for v in violations if v.rule_id == mlinter.TRF009]
+        trf009 = self._run(mlinter.TRF009, source)
         self.assertEqual(trf009, [])
 
     @patch("mlinter.trf009._known_model_dirs", return_value={"foo", "llama", "auto"})
@@ -46,7 +42,5 @@ from transformers.models.foo.configuration_foo import FooConfig as FooConfigAlia
         source = """
 from transformers.models.llama.modeling_llama import LlamaAttention
 """
-        file_path = Path("src/transformers/models/foo/modular_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF009})
-        trf009 = [v for v in violations if v.rule_id == mlinter.TRF009]
+        trf009 = self._run(mlinter.TRF009, source, file_name="modular_foo.py")
         self.assertEqual(trf009, [])

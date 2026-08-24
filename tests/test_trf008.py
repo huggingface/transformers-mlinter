@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF008Test(RuleTestCase):
@@ -25,9 +25,7 @@ class TRF008Test(RuleTestCase):
 class FooPreTrainedModel(PreTrainedModel):
     pass
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF008})
-        trf008 = [v for v in violations if v.rule_id == mlinter.TRF008]
+        trf008 = self._run(mlinter.TRF008, source)
         self.assertEqual(len(trf008), 1)
         self.assertIn("without non-empty docstring arguments", trf008[0].message)
 
@@ -37,7 +35,5 @@ class FooPreTrainedModel(PreTrainedModel):
 class FooPreTrainedModel(PreTrainedModel):
     pass
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF008})
-        trf008 = [v for v in violations if v.rule_id == mlinter.TRF008]
+        trf008 = self._run(mlinter.TRF008, source)
         self.assertEqual(trf008, [])

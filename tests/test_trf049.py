@@ -27,9 +27,7 @@ class FooEmbeddings(nn.Module):
         self.position_embedding = nn.Parameter(torch.empty(config.num_positions, config.hidden_size))
         nn.init.trunc_normal_(self.position_embedding, std=config.initializer_range)
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF049})
-        trf049 = [v for v in violations if v.rule_id == mlinter.TRF049]
+        trf049 = self._run(mlinter.TRF049, source)
         self.assertEqual(len(trf049), 1)
         self.assertIn("FooEmbeddings.__init__ initializes weight values", trf049[0].message)
 

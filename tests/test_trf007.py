@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF007Test(RuleTestCase):
@@ -30,9 +30,7 @@ class FooModel(FooPreTrainedModel):
         self.post_init()
         self.proj = None
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF007})
-        trf007 = [v for v in violations if v.rule_id == mlinter.TRF007]
+        trf007 = self._run(mlinter.TRF007, source)
         self.assertEqual(len(trf007), 1)
         self.assertIn("assigns self.* after self.post_init()", trf007[0].message)
 
@@ -47,7 +45,5 @@ class FooModel(FooPreTrainedModel):
         self.proj = None
         self.post_init()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF007})
-        trf007 = [v for v in violations if v.rule_id == mlinter.TRF007]
+        trf007 = self._run(mlinter.TRF007, source)
         self.assertEqual(trf007, [])

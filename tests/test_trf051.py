@@ -27,9 +27,7 @@ class FooAttention(nn.Module):
             return flash_path(hidden_states)
         return eager_path(hidden_states)
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF051})
-        trf051 = [v for v in violations if v.rule_id == mlinter.TRF051]
+        trf051 = self._run(mlinter.TRF051, source)
         self.assertEqual(len(trf051), 1)
         self.assertIn("ALL_ATTENTION_FUNCTIONS.get_interface", trf051[0].message)
 

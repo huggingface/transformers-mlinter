@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF006Test(RuleTestCase):
@@ -28,8 +28,6 @@ class FooModel(FooPreTrainedModel):
     def forward(self, hidden_states, past_key_value=None, use_cache=False):
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF006})
-        trf006 = [v for v in violations if v.rule_id == mlinter.TRF006]
+        trf006 = self._run(mlinter.TRF006, source)
         self.assertEqual(len(trf006), 1)
         self.assertIn("past_key_values/use_cache", trf006[0].message)

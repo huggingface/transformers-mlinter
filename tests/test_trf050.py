@@ -26,9 +26,7 @@ class FooAttention(nn.Module):
         super().__init__()
         self.rotary_emb = FooRotaryEmbedding(config)
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF050})
-        trf050 = [v for v in violations if v.rule_id == mlinter.TRF050]
+        trf050 = self._run(mlinter.TRF050, source)
         self.assertEqual(len(trf050), 1)
         self.assertIn("FooAttention.__init__ instantiates FooRotaryEmbedding", trf050[0].message)
 

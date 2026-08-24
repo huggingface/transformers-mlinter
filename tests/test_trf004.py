@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF004Test(RuleTestCase):
@@ -25,9 +25,7 @@ class FooModel:
     def tie_weights(self):
         super().tie_weights()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF004})
-        trf004 = [v for v in violations if v.rule_id == mlinter.TRF004]
+        trf004 = self._run(mlinter.TRF004, source)
         self.assertEqual(len(trf004), 1)
         self.assertIn("overrides tie_weights", trf004[0].message)
 
@@ -36,7 +34,5 @@ class FooModel:
 class FooModel:
     _tied_weights_keys = ["lm_head.weight"]
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF004})
-        trf004 = [v for v in violations if v.rule_id == mlinter.TRF004]
+        trf004 = self._run(mlinter.TRF004, source)
         self.assertEqual(trf004, [])

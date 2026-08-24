@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF005Test(RuleTestCase):
@@ -24,9 +24,7 @@ class TRF005Test(RuleTestCase):
 class FooModel:
     _no_split_modules = ["FooDecoderLayer"]
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF005})
-        trf005 = [v for v in violations if v.rule_id == mlinter.TRF005]
+        trf005 = self._run(mlinter.TRF005, source)
         self.assertEqual(trf005, [])
 
     def test_trf005_invalid_empty_string(self):
@@ -34,9 +32,7 @@ class FooModel:
 class FooModel:
     _no_split_modules = [""]
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF005})
-        trf005 = [v for v in violations if v.rule_id == mlinter.TRF005]
+        trf005 = self._run(mlinter.TRF005, source)
         self.assertEqual(len(trf005), 1)
 
     def test_trf005_allows_attribute_error_sentinel_in_modular(self):
@@ -44,9 +40,7 @@ class FooModel:
 class FooModel(BarModel):
     _no_split_modules = AttributeError()
 """
-        file_path = Path("src/transformers/models/foo/modular_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF005})
-        trf005 = [v for v in violations if v.rule_id == mlinter.TRF005]
+        trf005 = self._run(mlinter.TRF005, source, file_name="modular_foo.py")
         self.assertEqual(trf005, [])
 
     def test_trf005_rejects_attribute_error_sentinel_in_modeling(self):
@@ -54,7 +48,5 @@ class FooModel(BarModel):
 class FooModel(BarModel):
     _no_split_modules = AttributeError()
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF005})
-        trf005 = [v for v in violations if v.rule_id == mlinter.TRF005]
+        trf005 = self._run(mlinter.TRF005, source)
         self.assertEqual(len(trf005), 1)

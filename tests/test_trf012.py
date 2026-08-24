@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF012Test(RuleTestCase):
@@ -25,9 +25,7 @@ class FooPreTrainedModel(PreTrainedModel):
     def _init_weights(self, module):
         module.weight.normal_(mean=0.0, std=0.02)
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF012})
-        trf012 = [v for v in violations if v.rule_id == mlinter.TRF012]
+        trf012 = self._run(mlinter.TRF012, source)
         self.assertEqual(len(trf012), 1)
         self.assertIn("in-place operation on a module's weight", trf012[0].message)
 
@@ -37,7 +35,5 @@ class FooPreTrainedModel(PreTrainedModel):
     def _init_weights(self, module):
         init.normal_(module.weight, mean=0.0, std=0.02)
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF012})
-        trf012 = [v for v in violations if v.rule_id == mlinter.TRF012]
+        trf012 = self._run(mlinter.TRF012, source)
         self.assertEqual(trf012, [])

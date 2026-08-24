@@ -24,9 +24,7 @@ class TRF048Test(RuleTestCase):
 class FooForCausalLM(FooPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF048})
-        trf048 = [v for v in violations if v.rule_id == mlinter.TRF048]
+        trf048 = self._run(mlinter.TRF048, source)
         self.assertEqual(len(trf048), 1)
         self.assertIn("dict", trf048[0].message)
 

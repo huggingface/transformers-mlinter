@@ -26,9 +26,7 @@ FOO_ATTENTION_CLASSES = {
     "sdpa": FooSdpaAttention,
 }
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF052})
-        trf052 = [v for v in violations if v.rule_id == mlinter.TRF052]
+        trf052 = self._run(mlinter.TRF052, source)
         self.assertEqual(len(trf052), 1)
         self.assertIn("FOO_ATTENTION_CLASSES", trf052[0].message)
 

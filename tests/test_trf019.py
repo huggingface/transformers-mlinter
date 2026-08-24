@@ -43,9 +43,7 @@ class FooProcessorKwargs(ProcessingKwargs, total=False):
     text_kwargs: FooTokenizerKwargs
     images_kwargs: FooImageProcessorKwargs
 """
-        file_path = Path("src/transformers/models/foo/processing_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
-        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        trf019 = self._run(mlinter.TRF019, source, file_name="processing_foo.py")
         self.assertEqual(len(trf019), 0)
 
     def test_trf019_no_violation_with_empty_defaults(self):
@@ -54,9 +52,7 @@ class FooProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {}
     text_kwargs: FooTokenizerKwargs
 """
-        file_path = Path("src/transformers/models/foo/processing_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
-        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        trf019 = self._run(mlinter.TRF019, source, file_name="processing_foo.py")
         self.assertEqual(len(trf019), 0)
 
     def test_trf019_ignores_non_processing_files(self):
@@ -79,9 +75,7 @@ class FooConfig:
         "text_kwargs": {"padding": False},
     }
 """
-        file_path = Path("src/transformers/models/foo/processing_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF019})
-        trf019 = [v for v in violations if v.rule_id == mlinter.TRF019]
+        trf019 = self._run(mlinter.TRF019, source, file_name="processing_foo.py")
         self.assertEqual(len(trf019), 0)
 
     def test_trf019_allowlisted_model_skipped(self):

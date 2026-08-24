@@ -29,9 +29,7 @@ class FooForCausalLM(FooPreTrainedModel):
             shift_labels = labels[..., 1:].contiguous()
         return logits
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF053})
-        trf053 = [v for v in violations if v.rule_id == mlinter.TRF053]
+        trf053 = self._run(mlinter.TRF053, source)
         self.assertEqual(len(trf053), 2)
         self.assertIn("self.loss_function owns shifting", trf053[0].message)
 

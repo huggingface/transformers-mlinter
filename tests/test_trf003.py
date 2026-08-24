@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF003Test(RuleTestCase):
@@ -30,9 +30,7 @@ class FooModel(FooPreTrainedModel):
             return (x,)
         return x
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF003})
-        trf003 = [v for v in violations if v.rule_id == mlinter.TRF003]
+        trf003 = self._run(mlinter.TRF003, source)
         self.assertEqual(len(trf003), 1)
         self.assertIn("old return_dict branching pattern", trf003[0].message)
 
@@ -45,9 +43,7 @@ class FooModel(FooPreTrainedModel):
     def forward(self, x):
         return x
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF003})
-        trf003 = [v for v in violations if v.rule_id == mlinter.TRF003]
+        trf003 = self._run(mlinter.TRF003, source)
         self.assertEqual(trf003, [])
 
     def test_trf003_allows_return_dict_without_branching(self):
@@ -59,7 +55,5 @@ class FooModel(FooPreTrainedModel):
     def forward(self, x, return_dict=None):
         return x
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF003})
-        trf003 = [v for v in violations if v.rule_id == mlinter.TRF003]
+        trf003 = self._run(mlinter.TRF003, source)
         self.assertEqual(trf003, [])

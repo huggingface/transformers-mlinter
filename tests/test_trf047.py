@@ -26,9 +26,7 @@ class FooImageProcessor(BaseImageProcessor):
         self.original_sizes = [image.shape for image in images]
         return images
 """
-        file_path = Path("src/transformers/models/foo/image_processing_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF047})
-        trf047 = [v for v in violations if v.rule_id == mlinter.TRF047]
+        trf047 = self._run(mlinter.TRF047, source, file_name="image_processing_foo.py")
         self.assertEqual(len(trf047), 1)
         self.assertIn("FooImageProcessor._preprocess writes self.original_sizes", trf047[0].message)
 

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF010Test(RuleTestCase):
@@ -27,9 +27,7 @@ from huggingface_hub.dataclasses import strict
 class FooConfig(PretrainedConfig):
     pass
 """
-        file_path = Path("src/transformers/models/foo/configuration_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF010})
-        trf010 = [v for v in violations if v.rule_id == mlinter.TRF010]
+        trf010 = self._run(mlinter.TRF010, source, file_name="configuration_foo.py")
         self.assertEqual(trf010, [])
 
     def test_trf010_flags_missing_strict_on_direct_config(self):
@@ -37,9 +35,7 @@ class FooConfig(PretrainedConfig):
 class FooConfig(PretrainedConfig):
     pass
 """
-        file_path = Path("src/transformers/models/foo/configuration_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF010})
-        trf010 = [v for v in violations if v.rule_id == mlinter.TRF010]
+        trf010 = self._run(mlinter.TRF010, source, file_name="configuration_foo.py")
         self.assertEqual(len(trf010), 1)
         self.assertIn("missing @strict", trf010[0].message)
 
@@ -54,7 +50,5 @@ class FooConfig(PretrainedConfig):
 class FooCompatConfig(FooConfig):
     pass
 """
-        file_path = Path("src/transformers/models/foo/configuration_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF010})
-        trf010 = [v for v in violations if v.rule_id == mlinter.TRF010]
+        trf010 = self._run(mlinter.TRF010, source, file_name="configuration_foo.py")
         self.assertEqual(trf010, [])

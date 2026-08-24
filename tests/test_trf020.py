@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, _trf020_mod, mlinter, patch
+from tests.rule_test_utils import RuleTestCase, _trf020_mod, mlinter, patch
 
 
 class TRF020Test(RuleTestCase):
@@ -34,9 +34,7 @@ class FooAttention(nn.Module):
         key_states, value_states = torch.split(k_pass, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
         return key_states, value_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
-        trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
+        trf020 = self._run(mlinter.TRF020, source)
         self.assertEqual(len(trf020), 1)
         self.assertIn("self.kv_b_proj", trf020[0].message)
 
@@ -60,9 +58,7 @@ class FooAttention(nn.Module):
         key_states, value_states = self.expand_kv(k_pass, k_rot)
         return key_states, value_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
-        trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
+        trf020 = self._run(mlinter.TRF020, source)
         self.assertEqual(trf020, [])
 
     @patch.object(_trf020_mod, "_MLA_MODEL_DIRS", {"foo"})
@@ -80,9 +76,7 @@ class FooAttention(DeepseekV32Attention):
         key_states, value_states = self.expand_kv(k_pass, k_rot)
         return key_states, value_states
 """
-        file_path = Path("src/transformers/models/foo/modular_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
-        trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
+        trf020 = self._run(mlinter.TRF020, source, file_name="modular_foo.py")
         self.assertEqual(trf020, [])
 
     @patch.object(_trf020_mod, "_MLA_MODEL_DIRS", {"foo"})
@@ -101,9 +95,7 @@ class FooAttention(nn.Module):
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         return compressed_kv
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
-        trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
+        trf020 = self._run(mlinter.TRF020, source)
         self.assertEqual(len(trf020), 1)
         self.assertIn("dedicated expansion method", trf020[0].message)
 
@@ -122,9 +114,7 @@ class FooAttention(nn.Module):
         key_states = self.latent_up_proj(compressed_kv)
         return key_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
-        trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
+        trf020 = self._run(mlinter.TRF020, source)
         self.assertEqual(len(trf020), 1)
         self.assertIn("self.latent_up_proj", trf020[0].message)
 
@@ -149,9 +139,7 @@ class FooAttention(nn.Module):
         key_states, value_states = self.expand_kv(k_pass, k_rot)
         return key_states, value_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
-        trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
+        trf020 = self._run(mlinter.TRF020, source)
         self.assertEqual(trf020, [])
 
     @patch.object(_trf020_mod, "_MLA_MODEL_DIRS", {"bar"})
@@ -167,9 +155,7 @@ class FooAttention(nn.Module):
         key_states = self.kv_b_proj(hidden_states)
         return key_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
-        trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
+        trf020 = self._run(mlinter.TRF020, source)
         self.assertEqual(trf020, [])
 
     @patch.object(_trf020_mod, "_MLA_MODEL_DIRS", {"foo"})
@@ -185,7 +171,5 @@ class FooAttention(nn.Module):
         key_states = self.kv_b_proj(hidden_states)
         return key_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF020})
-        trf020 = [v for v in violations if v.rule_id == mlinter.TRF020]
+        trf020 = self._run(mlinter.TRF020, source)
         self.assertEqual(trf020, [])

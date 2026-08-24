@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF014Test(RuleTestCase):
@@ -23,9 +23,7 @@ class TRF014Test(RuleTestCase):
         source = """
 model = AutoModel.from_pretrained("foo", trust_remote_code=True)
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF014})
-        trf014 = [v for v in violations if v.rule_id == mlinter.TRF014]
+        trf014 = self._run(mlinter.TRF014, source)
         self.assertEqual(len(trf014), 1)
         self.assertIn("trust_remote_code", trf014[0].message)
 
@@ -33,7 +31,5 @@ model = AutoModel.from_pretrained("foo", trust_remote_code=True)
         source = """
 model = AutoModel.from_pretrained("foo", torch_dtype="auto")
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF014})
-        trf014 = [v for v in violations if v.rule_id == mlinter.TRF014]
+        trf014 = self._run(mlinter.TRF014, source)
         self.assertEqual(trf014, [])

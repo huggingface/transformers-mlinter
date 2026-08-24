@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF017Test(RuleTestCase):
@@ -26,9 +26,7 @@ class TRF017Test(RuleTestCase):
 class FooOutput(ModelOutput):
     last_hidden_state: torch.FloatTensor = None
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
-        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        trf017 = self._run(mlinter.TRF017, source)
         self.assertEqual(len(trf017), 1)
         self.assertIn("FooOutput", trf017[0].message)
         self.assertIn("@dataclass listed above @auto_docstring", trf017[0].message)
@@ -44,9 +42,7 @@ class FooOutput(ModelOutput):
 class FooForPreTrainingOutput(ModelOutput):
     loss: torch.FloatTensor = None
 '''
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
-        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        trf017 = self._run(mlinter.TRF017, source)
         self.assertEqual(len(trf017), 1)
         self.assertIn("FooForPreTrainingOutput", trf017[0].message)
 
@@ -57,9 +53,7 @@ class FooForPreTrainingOutput(ModelOutput):
 class FooOutput(ModelOutput):
     last_hidden_state: torch.FloatTensor = None
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
-        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        trf017 = self._run(mlinter.TRF017, source)
         self.assertEqual(trf017, [])
 
     def test_trf017_allows_dataclass_only(self):
@@ -68,9 +62,7 @@ class FooOutput(ModelOutput):
 class FooOutput(ModelOutput):
     last_hidden_state: torch.FloatTensor = None
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
-        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        trf017 = self._run(mlinter.TRF017, source)
         self.assertEqual(trf017, [])
 
     def test_trf017_allows_auto_docstring_only(self):
@@ -79,9 +71,7 @@ class FooOutput(ModelOutput):
 class FooModel(PreTrainedModel):
     pass
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
-        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        trf017 = self._run(mlinter.TRF017, source)
         self.assertEqual(trf017, [])
 
     def test_trf017_respects_inline_suppression(self):
@@ -91,7 +81,5 @@ class FooModel(PreTrainedModel):
 class FooOutput(ModelOutput):
     last_hidden_state: torch.FloatTensor = None
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF017})
-        trf017 = [v for v in violations if v.rule_id == mlinter.TRF017]
+        trf017 = self._run(mlinter.TRF017, source)
         self.assertEqual(trf017, [])

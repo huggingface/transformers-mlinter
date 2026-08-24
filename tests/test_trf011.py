@@ -34,9 +34,7 @@ class FooModel(FooPreTrainedModel):
             )
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(len(trf011), 1)
         self.assertIn("decoder_layer.attention_type", trf011[0].message)
 
@@ -53,9 +51,7 @@ class FooModel(FooPreTrainedModel):
             hidden_states = layer(hidden_states, attention_mask=mask)
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(len(trf011), 1)
         self.assertIn("layer.layer_type", trf011[0].message)
 
@@ -71,9 +67,7 @@ class FooModel(FooPreTrainedModel):
             hidden_states = layer(hidden_states, mask=layer.is_sliding)
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(len(trf011), 1)
         self.assertIn("layer.is_sliding", trf011[0].message)
 
@@ -89,9 +83,7 @@ class FooModel(FooPreTrainedModel):
             hidden_states = block(hidden_states, mask=block.layer_type)
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(len(trf011), 1)
         self.assertIn("block.layer_type", trf011[0].message)
         self.assertIn("self.blocks", trf011[0].message)
@@ -107,9 +99,7 @@ class FooModel(FooPreTrainedModel):
         padding_idx = self.embed_tokens.padding_idx
         return self.embed_tokens(input_ids.masked_fill(input_ids == padding_idx, 0))
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(len(trf011), 1)
         self.assertIn("self.embed_tokens.padding_idx", trf011[0].message)
 
@@ -123,9 +113,7 @@ class FooModel(FooPreTrainedModel):
     def forward(self, hidden_states):
         return self.final_layer_norm(hidden_states.to(dtype=self.final_layer_norm.weight.dtype))
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(len(trf011), 1)
         self.assertIn("self.final_layer_norm.weight", trf011[0].message)
 
@@ -144,9 +132,7 @@ class FooModel(FooPreTrainedModel):
             )
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(trf011, [])
 
     @patch.object(_trf011_mod, "_PP_PLAN_MODULES_BY_MODEL_DIR", TEST_PP_PLAN_MODULES)
@@ -162,9 +148,7 @@ class FooModel(FooPreTrainedModel):
                 hidden_states = layer(hidden_states)
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(trf011, [])
 
     @patch.object(_trf011_mod, "_PP_PLAN_MODULES_BY_MODEL_DIR", TEST_PP_PLAN_MODULES)
@@ -179,9 +163,7 @@ class FooModel(FooPreTrainedModel):
             return self.embed_tokens(input_ids)
         return input_ids
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(trf011, [])
 
     def test_trf011_skips_models_without_pp_plan(self):
@@ -214,7 +196,5 @@ class FooModel(FooPreTrainedModel):
             hidden_states = layer(hidden_states, mask=layer.attention_type)
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF011})
-        trf011 = [v for v in violations if v.rule_id == mlinter.TRF011]
+        trf011 = self._run(mlinter.TRF011, source)
         self.assertEqual(trf011, [])

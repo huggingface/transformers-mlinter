@@ -25,9 +25,7 @@ class FooAttention(nn.Module):
     def forward(self, hidden_states, past_key_values=None, cache_position=None, **kwargs):
         return hidden_states
 """
-        file_path = Path("src/transformers/models/foo/modeling_foo.py")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF044})
-        trf044 = [v for v in violations if v.rule_id == mlinter.TRF044]
+        trf044 = self._run(mlinter.TRF044, source)
         self.assertEqual(len(trf044), 1)
         self.assertIn("cache_position", trf044[0].message)
 

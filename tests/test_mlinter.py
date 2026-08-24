@@ -683,7 +683,14 @@ class _LazyConfigMapping(OrderedDict[str, str]):
             models_root = Path(tmpdir)
             model_dir = models_root / "foo"
             model_dir.mkdir()
-            filenames = ["modeling_foo.py", "processing_foo.py", "image_processing_foo.py", "video_processing_foo.py"]
+            filenames = [
+                "modeling_foo.py",
+                "processing_foo.py",
+                "image_processing_foo.py",
+                "video_processing_foo.py",
+                "tokenization_foo.py",
+                "generation_foo.py",
+            ]
             for name in filenames:
                 path = model_dir / name
                 path.write_text("import torch", encoding="utf-8")
@@ -711,7 +718,7 @@ class _LazyConfigMapping(OrderedDict[str, str]):
             "        super().__init__(config)\n",
             encoding="utf-8",
         )
-        (repo / "generation_utils.py").write_text("def generate():\n    pass\n", encoding="utf-8")
+        (repo / "sampling_helpers.py").write_text("def sample():\n    pass\n", encoding="utf-8")
         return repo
 
     def test_search_paths_discover_model_files_outside_the_transformers_layout(self):
@@ -748,7 +755,7 @@ class _LazyConfigMapping(OrderedDict[str, str]):
         with tempfile.TemporaryDirectory() as tmp_dir:
             repo = self._write_standalone_model_repo(Path(tmp_dir))
             self.assertTrue(mlinter._is_modeling_candidate(repo / "modeling_llada.py", [repo]))
-            self.assertFalse(mlinter._is_modeling_candidate(repo / "generation_utils.py", [repo]))
+            self.assertFalse(mlinter._is_modeling_candidate(repo / "sampling_helpers.py", [repo]))
             self.assertFalse(
                 mlinter._is_modeling_candidate(Path("src/transformers/models/foo/modeling_foo.py"), [repo])
             )

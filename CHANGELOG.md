@@ -39,11 +39,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `generation_*.py` files in a model directory are now discovered, so rules see them for the first time. There are
+  ten in transformers (`generation_whisper.py`, `generation_parakeet.py`, `generation_csm.py`, ...) and they hold
+  model implementation code, but no pattern in `MODELING_PATTERNS` matched them. `TRF009` gained the matching prefix
+  and reports the two real cross-model imports the widening exposes: `nemotron3_5_asr` importing from
+  `nemotron_asr_streaming`, and that in turn from `parakeet`. A full run over transformers confirms the widening
+  adds nothing else -- 40 findings before, 42 after, both new ones `TRF009` -- so the dozen rules that gate on AST
+  content rather than on a file-name prefix are unaffected. Note the pattern also claims a `generation_utils.py`
+  helper, which matters mainly when linting a standalone model repository. Closes
+  [#49](https://github.com/huggingface/transformers-mlinter/issues/49).
+
 - Widened `TRF009` on both axes it was missing. It now runs on every file in a model directory --
   `configuration_*.py`, `processing_*.py`, `image_processing_*.py`, `video_processing_*.py`,
   `feature_extraction_*.py` and `tokenization_*.py` as well as `modeling_*.py` -- since a config that imports
   another model's config couples the two models just as tightly as a modeling file that does; `modular_*.py`
-  stays exempt, and is now the only exemption. It also recognises the public-API form,
+  stays exempt, while `convert_*.py` and `__init__.py` are out of scope -- a conversion script legitimately
+  builds a checkpoint out of whatever the original release shipped, and an `__init__.py` alias is the same
+  coupling already reported on the tokenizer file itself. It also recognises the public-API form,
   `from transformers import CLIPTextModelWithProjection`, which reached another model's implementation without
   naming its package and so went unreported. Because that form gives only a class name, the owning directory is
   recovered from the name and then confirmed against the classes that directory really defines, so a shared class

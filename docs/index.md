@@ -42,7 +42,7 @@ of the library is a few seconds of parsing.
 Every file under `src/transformers/models/` matching one of these patterns:
 
 `modeling_*.py`, `modular_*.py`, `configuration_*.py`, `processing_*.py`, `image_processing_*.py`,
-`video_processing_*.py`, `feature_extraction_*.py`, `tokenization_*.py`
+`video_processing_*.py`, `feature_extraction_*.py`, `tokenization_*.py`, `generation_*.py`
 
 plus `test_tokenization_*.py` under `tests/models/` — the only test files walked, since
 [TRF042](rules/trf042.md) is the only rule that reads one.

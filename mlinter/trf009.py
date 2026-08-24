@@ -41,6 +41,7 @@ _CHECKED_PREFIXES = (
     "video_processing_",
     "feature_extraction_",
     "tokenization_",
+    "generation_",
 )
 
 # Model directories every model is meant to reach through rather than around. `auto` holds the mappings

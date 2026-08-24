@@ -97,6 +97,17 @@ class FooInputs:
 """
         self.assertEqual(self._run(mlinter.TRF031, source), [])
 
+    def test_trf031_treats_field_with_default_as_optional(self):
+        source = """
+@dataclass
+class FooStructureOutput:
+    hidden_states: torch.Tensor
+    attention_mask: Optional[torch.Tensor] = field(default=None)
+    past_key_values: list[torch.Tensor] = field(default_factory=list)
+"""
+        violations = self._run(mlinter.TRF031, source)
+        self.assertEqual(len(violations), 1)
+
     def test_trf031_accepts_model_output_bases(self):
         source = """
 @auto_docstring

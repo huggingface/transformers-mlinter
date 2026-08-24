@@ -39,6 +39,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Rewrote the `what_it_does` and `why_bad` prose in `rules.toml`, cutting it by a fifth overall and far more than
+  that where it had run away: `TRF009` 3244 -> 1220 characters, `TRF041` 2418 -> 1457, `TRF038` 1940 -> 1301,
+  `TRF042` 1620 -> 1032. No rule's explanation is over 1500 characters any more, down from 3244. What went is
+  repeated justification, review-culture asides ("reviewers ask for this on every new model") and release trivia
+  that belongs in this file; what stayed is the scope, the exemptions and the fix. Every rule page now reads as
+  two tight paragraphs -- what is flagged and what is exempt, then what breaks and what to do instead -- so a
+  contributor landing on one from a failing CI job gets the answer without wading to it.
+
 - `generation_*.py` files in a model directory are now discovered, so rules see them for the first time. There are
   ten in transformers (`generation_whisper.py`, `generation_parakeet.py`, `generation_csm.py`, ...) and they hold
   model implementation code, but no pattern in `MODELING_PATTERNS` matched them. `TRF009` gained the matching prefix

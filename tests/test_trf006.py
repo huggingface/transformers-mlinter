@@ -31,3 +31,17 @@ class FooModel(FooPreTrainedModel):
         trf006 = self._run(mlinter.TRF006, source)
         self.assertEqual(len(trf006), 1)
         self.assertIn("past_key_values/use_cache", trf006[0].message)
+
+    def test_trf006_allows_referenced_cache_args(self):
+        source = """
+class FooPreTrainedModel:
+    pass
+
+class FooModel(FooPreTrainedModel):
+    def forward(self, hidden_states, past_key_value=None, use_cache=False):
+        if use_cache and past_key_value is not None:
+            hidden_states = hidden_states + past_key_value[0]
+        return hidden_states
+"""
+        trf006 = self._run(mlinter.TRF006, source)
+        self.assertEqual(trf006, [])

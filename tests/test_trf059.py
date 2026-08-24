@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, _helpers_mod, _trf059_mod, mlinter, patch, tempfile, unittest
+from tests.rule_test_utils import Path, RuleTestCase, _helpers_mod, _trf059_mod, mlinter, patch, tempfile
 
 
 class TRF059Test(RuleTestCase):
@@ -107,8 +107,4 @@ class Llama4TextExperts(nn.Module):
         file_path = Path("src/transformers/models/llama4/modeling_llama4.py")
         with patch.object(_trf059_mod, "_MOE_TP_MODEL_DIRS", {"llama4"}):
             violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF059})
-        self.assertEqual([violation for violation in violations if violation.rule_id == mlinter.TRF059], [])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF059], [])

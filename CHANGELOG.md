@@ -54,6 +54,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Narrowed `TRF041` so it stops asking for a `# CODEPATH:` note where nothing diverges. Two exemptions:
+  framework plumbing fields (`problem_type`, `hidden_act`, `num_labels`, `use_cache`, the special token ids and
+  the rest of `DEFAULT_EXEMPT_ATTRIBUTES` in `mlinter/trf041.py`), and guard branches -- an `if` with no `else`
+  whose body only raises or only warns/logs. Over a transformers checkout with `cutoff_date` neutralised, which
+  is what a new model faces: 1749 findings before, 907 after (-48%). `openai`, `timm_backbone`, `timm_wrapper`
+  and `vitpose_backbone` came off the allowlist, and a rule table may now carry `ignored_attributes = [...]` so a
+  project with its own `rules.toml` can extend the exempt list without an mlinter release. Closes
+  [#52](https://github.com/huggingface/transformers-mlinter/issues/52).
+
 - Rewrote the `what_it_does` and `why_bad` prose in `rules.toml`, cutting it by a fifth overall and far more than
   that where it had run away: `TRF009` 3244 -> 1220 characters, `TRF041` 2418 -> 1457, `TRF038` 1940 -> 1301,
   `TRF042` 1620 -> 1032. No rule's explanation is over 1500 characters any more, down from 3244. What went is

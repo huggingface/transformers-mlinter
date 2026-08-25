@@ -179,6 +179,12 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], dict[str, 
         if not isinstance(allowlist_models, list) or any(not isinstance(item, str) for item in allowlist_models):
             raise ValueError(f"Invalid rule spec for {rule_id}: allowlist_models must be list[str]")
 
+        # A rule that exempts config attributes (TRF041) reads its extra exemptions from here, so a
+        # project pointing `--rules-toml` at its own copy can widen the list without an mlinter release.
+        ignored_attributes = spec.get("ignored_attributes", [])
+        if not isinstance(ignored_attributes, list) or any(not isinstance(item, str) for item in ignored_attributes):
+            raise ValueError(f"Invalid rule spec for {rule_id}: ignored_attributes must be list[str]")
+
         # Some rules are applied on new models, released after cutoff date. We don't have to maintain a long
         # allowlist of old models where the rule is allowed due to BC, if we filter by model addition date!
         cutoff_date = spec.get("cutoff_date")
@@ -198,6 +204,7 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], dict[str, 
             "explanation": explanation,
             "allowlist_models": set(allowlist_models),
             "cutoff_date": cutoff_date,
+            "ignored_attributes": frozenset(ignored_attributes),
         }
 
     return specs, deprecated, hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
@@ -459,11 +466,15 @@ def _apply_rule_module_state(rule_specs: dict[str, dict], checks: dict[str, Chec
     the bundled date overwritten rather than left in place -- otherwise `--rules-toml` can add a cutoff
     but never remove one, and the exemption stays in force with nothing in the active file saying so.
     `CUTOFF_DATE = ""` is what a rule module means by "no exemption", so that is what absence maps to.
+    The same holds for switching back off a spec file, as `_using_rule_specs` does on exit.
     """
     for rule_id, check_fn in checks.items():
         mod = sys.modules[check_fn.__module__]
+        spec = rule_specs.get(rule_id, {})
         if hasattr(mod, "CUTOFF_DATE"):
-            mod.CUTOFF_DATE = rule_specs.get(rule_id, {}).get("cutoff_date") or ""
+            mod.CUTOFF_DATE = spec.get("cutoff_date") or ""
+        if hasattr(mod, "IGNORED_ATTRIBUTES"):
+            mod.IGNORED_ATTRIBUTES = frozenset(spec.get("ignored_attributes", frozenset()))
 
 
 def _is_rule_id_name(name: str) -> bool:

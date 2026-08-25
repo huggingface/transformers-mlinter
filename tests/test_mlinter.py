@@ -317,6 +317,43 @@ class CheckModelingStructureTest(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("expected version 1", stderr.getvalue())
 
+    def test_rules_toml_ignored_attributes_extend_a_rule_exempt_list(self):
+        """A project keeping its own rules.toml can widen TRF041's exempt fields without a release."""
+        source = "def f(self):\n    if config.two_stage:\n        self.stage = Stage()\n"
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        self.assertEqual(len(mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF041})), 1)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = Path(tmp_dir) / "custom_rules.toml"
+            custom_rules_path.write_text(
+                mlinter.DEFAULT_RULE_SPECS_PATH.read_text(encoding="utf-8").replace(
+                    "[rules.TRF041]", '[rules.TRF041]\nignored_attributes = ["config.two_stage"]', 1
+                ),
+                encoding="utf-8",
+            )
+            with mlinter._using_rule_specs(custom_rules_path):
+                self.assertEqual(
+                    mlinter.TRF_RULE_SPECS["TRF041"]["ignored_attributes"], frozenset({"config.two_stage"})
+                )
+                self.assertEqual(mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF041}), [])
+
+        # Leaving the custom specs behind restores the bundled exempt list.
+        self.assertEqual(mlinter.TRF_RULE_SPECS["TRF041"]["ignored_attributes"], frozenset())
+        self.assertEqual(len(mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF041})), 1)
+
+    def test_rules_toml_rejects_non_list_ignored_attributes(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = Path(tmp_dir) / "custom_rules.toml"
+            custom_rules_path.write_text(
+                mlinter.DEFAULT_RULE_SPECS_PATH.read_text(encoding="utf-8").replace(
+                    "[rules.TRF041]", '[rules.TRF041]\nignored_attributes = "config.two_stage"', 1
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "ignored_attributes must be list\\[str\\]"):
+                with mlinter._using_rule_specs(custom_rules_path):
+                    pass
+
     # --- Deprecated rules ---
 
     def test_deprecated_rule_is_ignored_by_the_registry(self):

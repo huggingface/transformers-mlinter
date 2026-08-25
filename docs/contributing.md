@@ -57,8 +57,9 @@ allowlist, or a rethink.
 1. Add a `[rules.TRFXXX]` entry to
    [`mlinter/rules.toml`](https://github.com/huggingface/transformers-mlinter/blob/main/mlinter/rules.toml).
 2. Fill in `description`, `default_enabled`, `explanation.what_it_does`, `explanation.why_bad`, and
-   `explanation.diff`. Optional: `allowlist_models` for per-model exemptions and `cutoff_date` to scope
-   the rule to newer models.
+   `explanation.diff`. Optional: `allowlist_models` for per-model exemptions, `cutoff_date` to scope
+   the rule to newer models, and `ignored_attributes` for a rule that exempts config fields (`TRF041`),
+   which reads it as its module-level `IGNORED_ATTRIBUTES` on top of its built-in exempt list.
 3. Create `mlinter/trfXXX.py` with a `check(tree, file_path, source_lines) -> list[Violation]` function.
 4. Use the `RULE_ID` module constant instead of hardcoding `"TRFXXX"` inside the check.
 5. Add or update focused tests in `tests/`.

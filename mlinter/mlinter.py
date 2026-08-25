@@ -441,15 +441,29 @@ def _build_rule_checks(rule_specs: dict[str, dict], deprecated_rules: frozenset[
         if not callable(check_fn):
             raise ValueError(f"Module {module_name} must define a check() function.")
         mod.RULE_ID = rule_id
-        cutoff_date = rule_specs[rule_id].get("cutoff_date")
-        if cutoff_date is not None and hasattr(mod, "CUTOFF_DATE"):
-            mod.CUTOFF_DATE = cutoff_date
         checks[rule_id] = check_fn
 
     missing_checks = sorted(set(rule_specs) - set(checks))
     if missing_checks:
         raise ValueError(f"Missing check module(s) for rule id(s): {', '.join(missing_checks)}")
-    return dict(sorted(checks.items()))
+    checks = dict(sorted(checks.items()))
+    _apply_rule_module_state(rule_specs, checks)
+    return checks
+
+
+def _apply_rule_module_state(rule_specs: dict[str, dict], checks: dict[str, CheckFn]) -> None:
+    """Push the spec fields a rule module reads as module globals onto that module.
+
+    Every field is assigned whether or not the spec carries it. A module is imported once per process
+    and the bundled specs are applied at import, so a rule whose spec drops `cutoff_date` has to have
+    the bundled date overwritten rather than left in place -- otherwise `--rules-toml` can add a cutoff
+    but never remove one, and the exemption stays in force with nothing in the active file saying so.
+    `CUTOFF_DATE = ""` is what a rule module means by "no exemption", so that is what absence maps to.
+    """
+    for rule_id, check_fn in checks.items():
+        mod = sys.modules[check_fn.__module__]
+        if hasattr(mod, "CUTOFF_DATE"):
+            mod.CUTOFF_DATE = rule_specs.get(rule_id, {}).get("cutoff_date") or ""
 
 
 def _is_rule_id_name(name: str) -> bool:
@@ -501,6 +515,9 @@ def _using_rule_specs(rule_specs_path: Path):
     finally:
         globals().update(previous_state)
         _refresh_rule_id_globals()
+        # Restoring the globals is not enough: the rule modules still hold what the custom file wrote,
+        # and they are shared process-wide.
+        _apply_rule_module_state(TRF_RULE_SPECS, TRF_RULE_CHECKS)
 
 
 _activate_rule_registry(DEFAULT_RULE_SPECS_PATH)

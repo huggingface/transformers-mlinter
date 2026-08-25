@@ -88,6 +88,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   [#56](https://github.com/huggingface/transformers-mlinter/issues/56) and is untouched here. Closes
   [#54](https://github.com/huggingface/transformers-mlinter/issues/54).
 
+- `TRF035` now accepts `# noqa: F401`, `F821` and `F822` in a `modular_*.py` file. A modular file is a
+  generation source, not shipped code: it deliberately does not define every name it uses, so ruff's
+  undefined-name family fires on correct code -- `__all__` entries the converter fills in, classes that live in
+  the parent model, imports kept only to be re-exported -- and there is no underlying issue to fix, which is what
+  the message asked for. `modeling_*.py` and `configuration_*.py` are unchanged, a `# noqa` naming any other code
+  is still reported (on the codes that are left, so the message says what to fix), and a bare `# noqa` is still
+  reported everywhere, since it hides every future violation on the line too. In a modular file that bare-`# noqa`
+  message now asks for the code instead of a rewrite, which is the actionable ask: two of the six in transformers
+  are an exempt code left unwritten. Over a transformers checkout with `cutoff_date` neutralised: 65 findings
+  before, 10 after (-85%), the survivors being six bare `# noqa`, two `F841` in `vivit` and two `E712` in
+  `esmfold`. The allowlist is now empty -- `hunyuan_vl`, `nemotron3_5_asr` and `zaya` were each there for a single
+  `F401` or `F821` in a modular file. Closes
+  [#55](https://github.com/huggingface/transformers-mlinter/issues/55).
+
 - Rewrote the `what_it_does` and `why_bad` prose in `rules.toml`, cutting it by a fifth overall and far more than
   that where it had run away: `TRF009` 3244 -> 1220 characters, `TRF041` 2418 -> 1457, `TRF038` 1940 -> 1301,
   `TRF042` 1620 -> 1032. No rule's explanation is over 1500 characters any more, down from 3244. What went is

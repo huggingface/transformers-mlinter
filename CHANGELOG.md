@@ -82,7 +82,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   framework plumbing fields (`problem_type`, `hidden_act`, `num_labels`, `use_cache`, the special token ids and
   the rest of `DEFAULT_EXEMPT_ATTRIBUTES` in `mlinter/trf041.py`), and guard branches -- an `if` with no `else`
   whose body only raises or only warns/logs. Over a transformers checkout with `cutoff_date` neutralised, which
-  is what a new model faces: 2609 findings before, 1483 after (-43%). `openai`, `timm_backbone`, `timm_wrapper`
+  is what a new model faces: 1749 findings before, 907 after (-48%). `openai`, `timm_backbone`, `timm_wrapper`
   and `vitpose_backbone` came off the allowlist, and a rule table may now carry `ignored_attributes = [...]` so a
   project with its own `rules.toml` can extend the exempt list without an mlinter release. Closes
   [#52](https://github.com/huggingface/transformers-mlinter/issues/52).

@@ -600,11 +600,11 @@ diff = '''
 [rules.TRF034]
 description = "Layer classes held in an nn.ModuleList must subclass GradientCheckpointingLayer."
 default_enabled = true
-allowlist_models = ["cosmos3_edge", "dinov3_convnext", "hunyuan_vl", "kimi_k25", "openai", "radio", "tipsv2", "tipsv2_dpt", "x_clip", "xcodec2"]
+allowlist_models = ["cosmos3_edge", "hunyuan_vl", "kimi_k25", "openai", "radio", "tipsv2", "tipsv2_dpt", "x_clip", "xcodec2"]
 cutoff_date = "2026-06-20"
 
 [rules.TRF034.explanation]
-what_it_does = "In modeling_*.py and modular_*.py, flags a locally-defined class whose name ends in `Layer` or `Block`, instantiated inside an `nn.ModuleList(...)`, that does not reach `GradientCheckpointingLayer` through its base chain. In modular files, relative imports into sibling model files are followed first; chains that still cannot be resolved are inconclusive. ModuleLists of projections, heads or experts are out of scope: they are not checkpointing boundaries."
+what_it_does = "In modeling_*.py and modular_*.py, flags a locally-defined class whose name ends in `Layer` or `Block`, instantiated inside an `nn.ModuleList(...)`, that does not reach `GradientCheckpointingLayer` through its base chain. In modular files, relative imports into sibling model files are followed first; chains that still cannot be resolved are inconclusive. ModuleLists of projections, heads or experts are out of scope: they are not checkpointing boundaries. Conv and pooling stacks that borrow the same suffix are out of scope by name -- `*ConvNormLayer`, `*ConvNeXt*Layer`/`*Block`, `*RepVggBlock`, `*PyramidPoolingBlock`, `*ResidualBlock`, `*BatchNormConvLayer`, `*PositionalConvLayer`, `*FPNLayer` -- since a fixed feature extractor is not where activations pile up. A plain `*ConvLayer` is not exempt: the wav2vec2, Hubert, SEW, WavLM, UniSpeech and SpeechT5 audio feature encoders all subclass `GradientCheckpointingLayer`, so for those the library has decided the conv stack is a boundary."
 why_bad = "`gradient_checkpointing_enable()` wraps a layer only if it is a GradientCheckpointingLayer. A plain nn.Module in the stack is skipped silently, so training appears checkpointed while still allocating full activations for those layers, and the OOM shows up far from the cause."
 diff = '''
 -class AcmeDecoderLayer(nn.Module):

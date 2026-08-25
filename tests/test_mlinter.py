@@ -903,6 +903,29 @@ class _LazyConfigMapping(OrderedDict[str, str]):
         self.assertEqual(exit_code, 0)
         self.assertIn("is not a model integration file", stderr.getvalue().replace("\n", ""))
 
+    def test_inherited_cutoff_exemption_reads_the_defining_model_not_the_linted_one(self):
+        models_root = Path("src/transformers/models")
+        parent = models_root / "rt_detr" / "modeling_rt_detr.py"
+        child = models_root / "d_fine" / "modular_d_fine.py"
+
+        def contribution_date(path):
+            return date(2024, 1, 1) if "rt_detr" in str(path) else date(2026, 12, 1)
+
+        with patch.object(_helpers_mod, "model_contribution_date", side_effect=contribution_date):
+            # The child is far too new to be grandfathered, but the structure is the parent's.
+            self.assertFalse(_helpers_mod.is_exempt_by_cutoff(child, "2026-06-20"))
+            self.assertTrue(_helpers_mod.is_exempt_by_inherited_cutoff(parent, child, "2026-06-20"))
+            # Inheriting inside your own model is never an excuse, whatever the model's date.
+            self.assertFalse(
+                _helpers_mod.is_exempt_by_inherited_cutoff(
+                    models_root / "rt_detr" / "modular_rt_detr.py", parent, "2026-06-20"
+                )
+            )
+            # A parent the cutoff does not cover can be fixed, so it grants nothing.
+            self.assertFalse(_helpers_mod.is_exempt_by_inherited_cutoff(child, parent, "2026-06-20"))
+            # No cutoff configured means no exemption at all.
+            self.assertFalse(_helpers_mod.is_exempt_by_inherited_cutoff(parent, child, ""))
+
     def test_known_model_dirs_is_empty_outside_a_transformers_checkout(self):
         with patch.object(_helpers_mod, "MODELS_ROOT", Path("/nonexistent/src/transformers/models")):
             self.assertEqual(_helpers_mod._known_model_dirs(), set())

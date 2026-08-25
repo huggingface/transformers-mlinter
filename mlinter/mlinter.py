@@ -179,6 +179,12 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], dict[str, 
         if not isinstance(allowlist_models, list) or any(not isinstance(item, str) for item in allowlist_models):
             raise ValueError(f"Invalid rule spec for {rule_id}: allowlist_models must be list[str]")
 
+        # A rule that exempts config attributes (TRF041) reads its extra exemptions from here, so a
+        # project pointing `--rules-toml` at its own copy can widen the list without an mlinter release.
+        ignored_attributes = spec.get("ignored_attributes", [])
+        if not isinstance(ignored_attributes, list) or any(not isinstance(item, str) for item in ignored_attributes):
+            raise ValueError(f"Invalid rule spec for {rule_id}: ignored_attributes must be list[str]")
+
         # Some rules are applied on new models, released after cutoff date. We don't have to maintain a long
         # allowlist of old models where the rule is allowed due to BC, if we filter by model addition date!
         cutoff_date = spec.get("cutoff_date")
@@ -198,6 +204,7 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], dict[str, 
             "explanation": explanation,
             "allowlist_models": set(allowlist_models),
             "cutoff_date": cutoff_date,
+            "ignored_attributes": frozenset(ignored_attributes),
         }
 
     return specs, deprecated, hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
@@ -452,17 +459,19 @@ def _build_rule_checks(rule_specs: dict[str, dict], deprecated_rules: frozenset[
 
 
 def _apply_rule_module_state(rule_specs: dict[str, dict], checks: dict[str, CheckFn]) -> None:
-    """Write each rule's spec fields onto its own module, which reads them as globals.
+    """Push the spec fields a rule module reads as module globals onto that module.
 
-    A field the spec does not set is assigned too, not skipped. Skipping is the bug: modules are
-    imported once per process and the bundled specs are applied at import, so a spec file that drops
-    `cutoff_date` left the bundled date in place and `--rules-toml` could add a cutoff but never remove
-    one. A rule module spells "no cutoff" as `CUTOFF_DATE = ""`, so that is what an absent date means.
+    Every field is assigned whether or not the spec carries it: a module is imported once per process,
+    so switching to another spec file -- or switching back off one, as `_using_rule_specs` does on exit
+    -- has to overwrite what the previous file left behind, not only add to it.
     """
     for rule_id, check_fn in checks.items():
         mod = sys.modules[check_fn.__module__]
+        spec = rule_specs.get(rule_id, {})
         if hasattr(mod, "CUTOFF_DATE"):
-            mod.CUTOFF_DATE = rule_specs.get(rule_id, {}).get("cutoff_date") or ""
+            mod.CUTOFF_DATE = spec.get("cutoff_date") or ""
+        if hasattr(mod, "IGNORED_ATTRIBUTES"):
+            mod.IGNORED_ATTRIBUTES = frozenset(spec.get("ignored_attributes", frozenset()))
 
 
 def _is_rule_id_name(name: str) -> bool:

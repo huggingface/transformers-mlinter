@@ -63,6 +63,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   project with its own `rules.toml` can extend the exempt list without an mlinter release. Closes
   [#52](https://github.com/huggingface/transformers-mlinter/issues/52).
 
+- `TRF029` no longer flags a config-field parameter that is optional with a `None` default. That is an override,
+  not a second source of truth: the config stays the source for every caller that passes nothing, and it is how
+  one MLP class serves both the dense and the expert width of a MoE model
+  (`def __init__(self, config, intermediate_size=None)`). A hardcoded default such as `hidden_size: int = 1024`
+  stays flagged -- it wins over the config silently whenever the caller passes nothing -- as does any required
+  parameter. Over a transformers checkout with `cutoff_date` neutralised: 141 findings before, 124 after, the 17
+  that went being the MoE MLPs the report named (`cohere2_moe`, `deepseek_v2`, `ernie4_5_moe`, `ernie4_5_vl_moe`,
+  `blt`, `llama4`, `qwen2_moe`, ...). Closes
+  [#53](https://github.com/huggingface/transformers-mlinter/issues/53).
+
 - Rewrote the `what_it_does` and `why_bad` prose in `rules.toml`, cutting it by a fifth overall and far more than
   that where it had run away: `TRF009` 3244 -> 1220 characters, `TRF041` 2418 -> 1457, `TRF038` 1940 -> 1301,
   `TRF042` 1620 -> 1032. No rule's explanation is over 1500 characters any more, down from 3244. What went is

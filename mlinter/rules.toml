@@ -517,7 +517,7 @@ allowlist_models = ["kosmos2"]
 cutoff_date = "2026-06-20"
 
 [rules.TRF029.explanation]
-what_it_does = "In modeling_*.py and modular_*.py, flags an `__init__` that takes `config` alongside an argument whose name is unambiguously a config field (hidden_size, num_attention_heads, intermediate_size, head_dim, num_hidden_layers, embed_dim, dropout, eps, patch_size, rope_theta, ...). kosmos2 is allowlisted: its doc page cannot be derived from the directory name, so the cutoff cannot grandfather it."
+what_it_does = "In modeling_*.py and modular_*.py, flags an `__init__` that takes `config` alongside an argument whose name is unambiguously a config field (hidden_size, num_attention_heads, intermediate_size, head_dim, num_hidden_layers, embed_dim, dropout, eps, patch_size, rope_theta, ...). A parameter that is optional with a `None` default is exempt: that is an override, not a second source of truth, and it is how one MLP class serves both the dense and the expert width of a MoE model. A hardcoded default such as `hidden_size: int = 1024` is not exempt -- it wins over the config whenever the caller passes nothing. kosmos2 is allowlisted: its doc page cannot be derived from the directory name, so the cutoff cannot grandfather it."
 why_bad = "The same number now has two sources of truth and the caller decides which one wins, so editing the config no longer changes the model that gets built. It also pushes architecture knowledge out to every call site, where it does not belong."
 diff = '''
  class AcmeAttention(nn.Module):
@@ -528,6 +528,12 @@ diff = '''
 -        self.num_heads = num_heads
 +        self.embed_dim = config.hidden_size
 +        self.num_heads = config.num_attention_heads
+
+ class AcmeMLP(nn.Module):
+     # an optional override is fine: omitting it reads the config
+     def __init__(self, config, intermediate_size=None):
+         super().__init__()
+         self.intermediate_size = intermediate_size or config.intermediate_size
 '''
 
 [rules.TRF030]

@@ -55,6 +55,29 @@ CONFIG_FIELD_ARGUMENTS = {
 }
 
 
+def _parameters(args: ast.arguments) -> list[tuple[str, ast.expr | None]]:
+    """Every named parameter with its default expression, or None when it has none."""
+    # `defaults` covers the tail of posonlyargs + args, so the two lists are paired from the right.
+    positional = args.posonlyargs + args.args
+    padding: list[ast.expr | None] = [None] * (len(positional) - len(args.defaults))
+    paired = list(zip(positional, padding + list(args.defaults)))
+    paired += list(zip(args.kwonlyargs, args.kw_defaults))
+    return [(arg.arg, default) for arg, default in paired]
+
+
+def _is_optional_override(default: ast.expr | None) -> bool:
+    """Whether a parameter is optional with a literal `None` default, making it an override.
+
+    `def __init__(self, config, intermediate_size=None)` is not a second source of truth: the config
+    stays the source, and the parameter is an override a caller passes when one class has to serve two
+    widths -- the dense MLP and the expert MLP of a MoE model, built from the same class. Nothing is
+    ambiguous, because omitting it is the normal case and means "read the config". A parameter that is
+    required, or one carrying a hardcoded default such as `intermediate_size=4096`, is a different
+    matter: there the caller has to supply the number, or the signature already decided it.
+    """
+    return isinstance(default, ast.Constant) and default.value is None
+
+
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     if not file_path.name.startswith(("modeling_", "modular_")):
         return []
@@ -68,10 +91,14 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         for item in class_node.body:
             if not isinstance(item, ast.FunctionDef) or item.name != "__init__":
                 continue
-            names = [arg.arg for arg in item.args.args] + [arg.arg for arg in item.args.kwonlyargs]
-            if "config" not in names:
+            parameters = _parameters(item.args)
+            if not any(name == "config" for name, _ in parameters):
                 continue
-            redundant = [name for name in names if name in CONFIG_FIELD_ARGUMENTS]
+            redundant = [
+                name
+                for name, default in parameters
+                if name in CONFIG_FIELD_ARGUMENTS and not _is_optional_override(default)
+            ]
             if not redundant:
                 continue
             if _has_rule_suppression(source_lines, RULE_ID, item.lineno):

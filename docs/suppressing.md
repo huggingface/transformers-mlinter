@@ -90,6 +90,12 @@ read from the contribution date on the model's doc page. This is what keeps a ne
 ship with a 300-model allowlist. A model whose doc page has no contribution date **is** checked, so a
 missing date never silently disables a rule.
 
+A rule that resolves a base class into another model's directory reads the cutoff against the file
+where that base is **defined**, not the file being linted. Otherwise the violation lands on whichever
+model subclasses the older one — always the newer, non-exempt one — and its author cannot fix it
+without editing a model their PR does not touch. The parent's own file is still checked under the
+parent's own cutoff, so nothing that is enforced today is loosened.
+
 **Model allowlists.** Individual models that predate a convention and cannot be fixed without breaking
 backward compatibility are listed by name in `allowlist_models`. Each rule page on this site lists its
 own allowlist.

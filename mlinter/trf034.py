@@ -22,7 +22,9 @@ from ._helpers import (
     _collect_class_bases,
     _has_rule_suppression,
     full_name,
+    imported_classes,
     is_exempt_by_cutoff,
+    is_exempt_by_inherited_cutoff,
 )
 
 
@@ -33,20 +35,6 @@ CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no
 # gradient-checkpointing boundary.
 LAYER_CLASS_SUFFIXES = ("Layer", "Block")
 _MAX_INHERITANCE_HOPS = 12
-
-
-def _imported_classes(tree: ast.Module, file_path: Path) -> dict[str, tuple[Path, str]]:
-    imports: dict[str, tuple[Path, str]] = {}
-    for node in tree.body:
-        if not isinstance(node, ast.ImportFrom) or node.level == 0 or node.module is None:
-            continue
-        base_dir = file_path.parent
-        for _ in range(node.level - 1):
-            base_dir = base_dir.parent
-        imported_path = base_dir.joinpath(*node.module.split(".")).with_suffix(".py")
-        for alias in node.names:
-            imports[alias.asname or alias.name] = (imported_path, alias.name)
-    return imports
 
 
 def _parse_file(path: Path, cache: dict[Path, ast.Module | None]) -> ast.Module | None:
@@ -65,48 +53,60 @@ def _subclasses_gradient_checkpointing_layer(
     cache: dict[Path, ast.Module | None],
     seen: set[tuple[Path, str]] | None = None,
     hops: int = 0,
-) -> bool | None:
-    """Return True if the chain reaches GradientCheckpointingLayer, False if fully resolved, None if not."""
+) -> tuple[bool | None, Path]:
+    """Whether the chain reaches GradientCheckpointingLayer, and which file settles the question.
+
+    True if it reaches it, False if the chain resolves without one, None if some base could not be
+    followed. The second element is the file that owns the answer: for a False verdict, the file
+    defining the topmost ancestor that stops at `nn.Module` -- which is where the base class would have
+    to change, and so which model the violation belongs to. `DFineRepVggBlock(RTDetrRepVggBlock)` is a
+    plain module because rt_detr says so, not because d_fine did anything.
+    """
     if seen is None:
         seen = set()
     key = (file_path, name)
     if key in seen or hops >= _MAX_INHERITANCE_HOPS:
-        return None
+        return None, file_path
     seen.add(key)
 
     class_to_bases = _collect_class_bases(tree)
-    imports = _imported_classes(tree, file_path)
+    imports = imported_classes(tree, file_path)
     if name not in class_to_bases:
-        return None
+        return None, file_path
 
     found_unknown = False
+    owner = file_path
     for base in class_to_bases[name]:
         simple = base.split(".")[-1]
         if simple == "GradientCheckpointingLayer":
-            return True
+            return True, file_path
         if base.startswith(("nn.", "torch.nn.")) or simple in {"Module", "object"}:
             continue
         if simple in class_to_bases:
-            resolved = _subclasses_gradient_checkpointing_layer(simple, tree, file_path, cache, seen, hops + 1)
+            resolved, resolved_owner = _subclasses_gradient_checkpointing_layer(
+                simple, tree, file_path, cache, seen, hops + 1
+            )
         elif simple in imports:
             imported_path, imported_name = imports[simple]
             imported_tree = _parse_file(imported_path, cache)
-            resolved = (
-                None
-                if imported_tree is None
-                else _subclasses_gradient_checkpointing_layer(
+            if imported_tree is None:
+                resolved, resolved_owner = None, imported_path
+            else:
+                resolved, resolved_owner = _subclasses_gradient_checkpointing_layer(
                     imported_name, imported_tree, imported_path, cache, seen, hops + 1
                 )
-            )
         else:
-            resolved = None
+            resolved, resolved_owner = None, file_path
 
         if resolved is True:
-            return True
+            return True, resolved_owner
         if resolved is None:
             found_unknown = True
+        elif owner == file_path:
+            # The first base that resolves to a plain module is the one to name.
+            owner = resolved_owner
 
-    return None if found_unknown else False
+    return (None, file_path) if found_unknown else (False, owner)
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
@@ -137,8 +137,14 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                 continue
             if layer_name in reported:
                 continue
-            inheritance_status = _subclasses_gradient_checkpointing_layer(layer_name, tree, file_path, parsed_files)
+            inheritance_status, owner_path = _subclasses_gradient_checkpointing_layer(
+                layer_name, tree, file_path, parsed_files
+            )
             if inheritance_status is not False:
+                continue
+            # The base class is another model's, and that model is grandfathered: reporting it here
+            # asks this author to edit a model their PR does not touch.
+            if is_exempt_by_inherited_cutoff(owner_path, file_path, CUTOFF_DATE):
                 continue
             if _has_rule_suppression(source_lines, RULE_ID, node.lineno):
                 continue

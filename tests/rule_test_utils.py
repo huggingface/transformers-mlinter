@@ -25,6 +25,7 @@ from mlinter import trf019 as _trf019_mod  # noqa: F401 - re-exported for existi
 from mlinter import trf020 as _trf020_mod  # noqa: F401 - re-exported for existing rule tests
 from mlinter import trf022 as _trf022_mod  # noqa: F401 - re-exported for existing rule tests
 from mlinter import trf023 as _trf023_mod  # noqa: F401 - re-exported for existing rule tests
+from mlinter import trf034 as _trf034_mod  # noqa: F401 - re-exported for existing rule tests
 from mlinter import trf038 as _trf038_mod  # noqa: F401 - re-exported for existing rule tests
 from mlinter import trf042 as _trf042_mod  # noqa: F401 - re-exported for existing rule tests
 from mlinter import trf057 as _trf057_mod  # noqa: F401 - re-exported for existing rule tests

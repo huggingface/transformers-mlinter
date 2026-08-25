@@ -39,6 +39,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- A rule that resolves a base class into another model's directory now reads its `cutoff_date` against the file
+  where that base is **defined**, not the file being linted. `is_exempt_by_cutoff` keyed on the linted file, so
+  inherited structure was attributed to whichever model subclassed it -- always the newer, non-exempt one -- while
+  the model that actually owns the code stayed grandfathered, and the author's only ways out were a model-wide
+  allowlist entry or a suppression. `TRF034` is the rule that walks cross-model bases today and uses the new
+  `is_exempt_by_inherited_cutoff` helper: 16 findings go, all of the shape
+  `DFineRepVggBlock(RTDetrRepVggBlock)`, where the plain `nn.Module` is rt_detr's and d_fine cannot change it --
+  `d_fine` (3), `deimv2` (3), `tipsv2_dpt` (3), `pp_lcnet_v3`, `pp_ocrv5_server_rec`, `pp_ocrv6_small_rec`,
+  `rf_detr`, `rt_detr_v2`, `sapiens2`, `slanet`. Measured with every model treated as newly added while parents
+  keep their real contribution dates, which is the only mode in which this defect is visible: 103 findings before,
+  87 after. `tipsv2_dpt` came off the allowlist, where it was covering three inherited DPT layers. Nothing
+  enforced today is loosened: the parent's own file is still checked under the parent's own cutoff, so the day the
+  parent stops being grandfathered both models are reported. Closes
+  [#56](https://github.com/huggingface/transformers-mlinter/issues/56).
+
 - Rewrote the `what_it_does` and `why_bad` prose in `rules.toml`, cutting it by a fifth overall and far more than
   that where it had run away: `TRF009` 3244 -> 1220 characters, `TRF041` 2418 -> 1457, `TRF038` 1940 -> 1301,
   `TRF042` 1620 -> 1032. No rule's explanation is over 1500 characters any more, down from 3244. What went is

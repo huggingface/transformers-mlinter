@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter, tempfile
+from tests.rule_test_utils import Path, RuleTestCase, _helpers_mod, _trf034_mod, date, mlinter, patch, tempfile
 
 
 class TRF034Test(RuleTestCase):
@@ -49,6 +49,66 @@ class FooModel(FooPreTrainedModel):
         self.layers = nn.ModuleList([FooDecoderLayer(config, i) for i in range(config.num_hidden_layers)])
 """
         self.assertEqual(self._run(mlinter.TRF034, source), [])
+
+    def test_trf034_does_not_report_a_base_class_a_grandfathered_model_owns(self):
+        """The parent model owns the structure, so the cutoff has to be read against the parent's file."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            models_root = Path(tmp_dir) / "src" / "transformers" / "models"
+            (models_root / "rt_detr").mkdir(parents=True)
+            (models_root / "d_fine").mkdir()
+            (models_root / "rt_detr" / "modeling_rt_detr.py").write_text(
+                "class RTDetrRepVggBlock(nn.Module):\n    pass\n", encoding="utf-8"
+            )
+            modular_path = models_root / "d_fine" / "modular_d_fine.py"
+            source = """
+from ..rt_detr.modeling_rt_detr import RTDetrRepVggBlock
+
+
+class DFineRepVggBlock(RTDetrRepVggBlock):
+    pass
+
+
+class DFineEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.blocks = nn.ModuleList([DFineRepVggBlock(config) for _ in range(2)])
+"""
+
+            def run(parent_date):
+                # The model being linted has no contribution date, so it is never grandfathered itself.
+                def contribution_date(path):
+                    return parent_date if "rt_detr" in str(path) else None
+
+                with (
+                    patch.object(_helpers_mod, "MODELS_ROOT", models_root),
+                    patch.object(_helpers_mod, "model_contribution_date", side_effect=contribution_date),
+                    patch.object(_trf034_mod, "CUTOFF_DATE", "2026-06-20"),
+                ):
+                    violations = mlinter.analyze_file(modular_path, source, enabled_rules={mlinter.TRF034})
+                return [violation for violation in violations if violation.rule_id == mlinter.TRF034]
+
+            # rt_detr predates the cutoff: d_fine cannot fix RTDetrRepVggBlock, so nothing is reported.
+            self.assertEqual(run(date(2024, 1, 1)), [])
+            # A parent the cutoff does not cover is a parent that can be fixed, so the finding stands.
+            self.assertEqual(len(run(date(2026, 7, 1))), 1)
+
+    def test_trf034_still_reports_a_base_owned_by_the_model_being_linted(self):
+        """Inheriting inside your own model is no excuse, whatever the model's own date says."""
+        source = """
+class FooBaseLayer(nn.Module):
+    pass
+
+
+class FooDecoderLayer(FooBaseLayer):
+    pass
+
+
+class FooModel(FooPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.layers = nn.ModuleList([FooDecoderLayer(config) for _ in range(2)])
+"""
+        self.assertEqual(len(self._run(mlinter.TRF034, source)), 1)
 
     def test_trf034_follows_local_inheritance(self):
         source = """

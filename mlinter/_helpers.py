@@ -140,6 +140,45 @@ def is_exempt_by_cutoff(file_path: Path, cutoff_date: str) -> bool:
     return contribution_date is not None and contribution_date < date.fromisoformat(cutoff_date)
 
 
+def is_exempt_by_inherited_cutoff(defining_path: Path, linted_path: Path, cutoff_date: str) -> bool:
+    """Whether the structure being reported was authored in another model that the cutoff grandfathers.
+
+    `is_exempt_by_cutoff` keys on the file being linted, which is the wrong file whenever a rule
+    resolves a base class into another model's directory: the verdict comes from the parent, but the
+    violation lands on whichever model subclasses it -- always the newer, non-exempt one. The author of
+    the new model cannot fix it without editing a model their PR does not touch, so the only ways out
+    are a model-wide allowlist entry or a suppression, both of which mute the rule for a model that did
+    nothing wrong.
+
+    A rule that walks cross-model bases passes the file where the offending structure is defined. This
+    loosens nothing: the parent's own file is still checked under the parent's own cutoff, so the day
+    the parent stops being grandfathered both models are reported.
+    """
+    if _model_dir_name(defining_path) == _model_dir_name(linted_path):
+        return False
+    return is_exempt_by_cutoff(defining_path, cutoff_date)
+
+
+def imported_classes(tree: ast.Module, file_path: Path) -> dict[str, tuple[Path, str]]:
+    """Names bound by relative imports, mapped to the file they come from and their name there.
+
+    Only relative imports are resolved, since that is how one model file reaches another
+    (`from ..llama.modeling_llama import LlamaDecoderLayer`), and they are what makes a base class
+    traceable to the model that owns it.
+    """
+    imports: dict[str, tuple[Path, str]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or node.level == 0 or node.module is None:
+            continue
+        base_dir = file_path.parent
+        for _ in range(node.level - 1):
+            base_dir = base_dir.parent
+        imported_path = base_dir.joinpath(*node.module.split(".")).with_suffix(".py")
+        for alias in node.names:
+            imports[alias.asname or alias.name] = (imported_path, alias.name)
+    return imports
+
+
 def _has_rule_suppression(lines: list[str], rule_id: str, line_number: int) -> bool:
     if line_number <= 0:
         return False

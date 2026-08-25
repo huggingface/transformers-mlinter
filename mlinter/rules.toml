@@ -616,11 +616,11 @@ diff = '''
 [rules.TRF035]
 description = "Model files must not silence the linter with `# noqa`."
 default_enabled = true
-allowlist_models = ["hunyuan_vl", "nemotron3_5_asr", "zaya"]
+allowlist_models = []
 cutoff_date = "2026-06-20"
 
 [rules.TRF035.explanation]
-what_it_does = "Flags `# noqa` comments, with or without explicit codes, in modeling_*.py, modular_*.py and configuration_*.py."
+what_it_does = "Flags `# noqa` comments, with or without explicit codes, in modeling_*.py, modular_*.py and configuration_*.py. In a modular file, `F401`, `F821` and `F822` are accepted: a modular file is a generation source that deliberately does not define every name it uses, so ruff's undefined-name family fires on correct code -- `__all__` entries the converter fills in, classes that live in the parent model, imports kept to be re-exported. A `# noqa` naming only those codes is skipped; one naming anything else is reported on the codes that are left. A bare `# noqa` is always reported; in a modular file the message asks for the code rather than a rewrite."
 why_bad = "Model files are ordinary code held to the repo's lint rules, so a suppression means the underlying issue was left in place -- and a bare `# noqa` also hides every future violation on that line. Fix the code instead."
 diff = '''
 -from ...modeling_utils import PreTrainedModel  # noqa: F401

@@ -73,6 +73,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `blt`, `llama4`, `qwen2_moe`, ...). Closes
   [#53](https://github.com/huggingface/transformers-mlinter/issues/53).
 
+- `TRF034` no longer asks conv and pooling stacks for `GradientCheckpointingLayer`. They borrow the same
+  `Layer`/`Block` suffix as a transformer layer without being checkpointing boundaries, so the rule now skips
+  `*ConvNormLayer`, `*ConvNeXt*Layer` and `*Block` in both spellings, `*RepVggBlock`, `*PyramidPoolingBlock`,
+  `*ResidualBlock`, `*BatchNormConvLayer`, `*PositionalConvLayer` and `*FPNLayer` -- the same carve-out the rule
+  already made for projections, heads and experts, written down. Every idiom on the list was checked against
+  transformers first: no class matching one of them subclasses `GradientCheckpointingLayer` anywhere, so the
+  exemption cannot mask a convention the library holds. A plain `*ConvLayer` is deliberately not exempt, since 33
+  of them do subclass it (the wav2vec2, Hubert, SEW, WavLM, UniSpeech and SpeechT5 audio feature encoders, and
+  every `*DepthwiseSeparableConvLayer` in pp_lcnet, slanet and pp_ocrv6_small_det), and neither is `ConvBertLayer`,
+  which is a real transformer layer. Over a transformers checkout with `cutoff_date` neutralised: 96 findings
+  before, 80 after, and 41 -> 33 of those in `modular_*.py`. `dinov3_convnext` came off the allowlist. The other
+  half of the report -- a base class inherited from another model directory -- is
+  [#56](https://github.com/huggingface/transformers-mlinter/issues/56) and is untouched here. Closes
+  [#54](https://github.com/huggingface/transformers-mlinter/issues/54).
+
 - Rewrote the `what_it_does` and `why_bad` prose in `rules.toml`, cutting it by a fifth overall and far more than
   that where it had run away: `TRF009` 3244 -> 1220 characters, `TRF041` 2418 -> 1457, `TRF038` 1940 -> 1301,
   `TRF042` 1620 -> 1032. No rule's explanation is over 1500 characters any more, down from 3244. What went is

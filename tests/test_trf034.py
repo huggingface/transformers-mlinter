@@ -50,6 +50,58 @@ class FooModel(FooPreTrainedModel):
 """
         self.assertEqual(self._run(mlinter.TRF034, source), [])
 
+    def test_trf034_exempts_conv_and_pooling_stack_names(self):
+        """Conv and pooling stacks borrow the Layer/Block suffix without being checkpointing boundaries."""
+        template = """
+class {name}(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+
+class FooEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.stages = nn.ModuleList([{name}(config) for _ in range(4)])
+"""
+        for name in (
+            "ConvNextLayer",
+            "ConvNextV2Layer",
+            "DINOv3ConvNextLayer",
+            "VibeVoiceAcousticTokenizerConvNext1dLayer",
+            "Qwen3OmniMoeConvNeXtBlock",  # the other spelling, and a Block suffix
+            "DFineRepVggBlock",
+            "RTDetrConvNormLayer",
+            "BeitPyramidPoolingBlock",
+            "SpeechT5BatchNormConvLayer",
+            "Data2VecAudioPositionalConvLayer",
+            "UnivNetLvcResidualBlock",
+            "Sam3FPNLayer",
+        ):
+            self.assertEqual(self._run(mlinter.TRF034, template.format(name=name)), [], name)
+
+    def test_trf034_still_flags_conv_named_layers_the_library_checkpoints(self):
+        """A plain `...ConvLayer` is not exempt: 33 of them subclass GradientCheckpointingLayer today."""
+        template = """
+class {name}(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+
+class FooEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.layers = nn.ModuleList([{name}(config) for _ in range(4)])
+"""
+        for name in (
+            "Wav2Vec2GroupNormConvLayer",
+            "PPLCNetDepthwiseSeparableConvLayer",
+            "SLANetConvLayer",
+            "ConvBertLayer",  # the anchor: a real transformer layer whose name starts with Conv
+        ):
+            violations = self._run(mlinter.TRF034, template.format(name=name))
+            self.assertEqual(len(violations), 1, name)
+            self.assertIn(name, violations[0].message)
+
     def test_trf034_follows_local_inheritance(self):
         source = """
 class FooBaseLayer(GradientCheckpointingLayer):

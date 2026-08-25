@@ -15,6 +15,7 @@
 """TRF034: Layer classes held in an nn.ModuleList must subclass GradientCheckpointingLayer."""
 
 import ast
+import re
 from pathlib import Path
 
 from ._helpers import (
@@ -32,6 +33,34 @@ CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no
 # Only the repeated per-layer blocks are in scope; a ModuleList of projections or experts is not a
 # gradient-checkpointing boundary.
 LAYER_CLASS_SUFFIXES = ("Layer", "Block")
+
+# Conv and pooling stacks borrow the same `Layer`/`Block` suffix without being checkpointing
+# boundaries: a ConvNext stage, an RT-DETR RepVGG branch, a BEiT pyramid-pooling head, a batch-norm
+# postnet or a positional conv is a fixed feature extractor, not a transformer layer whose activations
+# dominate memory. Asking those for `GradientCheckpointingLayer` is noise -- the same carve-out the
+# rule already makes for projections, heads and experts, written down.
+#
+# Every idiom here was checked against transformers: no class matching one of these names subclasses
+# `GradientCheckpointingLayer` anywhere, so exempting them cannot mask a convention the library holds.
+# A plain `...ConvLayer` is deliberately NOT here: 33 of them do subclass it (the wav2vec2, Hubert,
+# SEW, WavLM, UniSpeech and SpeechT5 audio feature encoders), and so does every
+# `...DepthwiseSeparableConvLayer` in pp_lcnet, slanet and pp_ocrv6_small_det. For those the library
+# has decided a conv stack is a checkpointing boundary, and the rule has to keep saying so.
+_CONV_OR_POOLING_CLASS_RE = re.compile(
+    r"(?:"
+    r"BatchNormConvLayer"  # SpeechT5 / FastSpeech2Conformer postnets
+    r"|PositionalConvLayer"  # data2vec-audio positional conv
+    r"|ConvNormLayer"  # RT-DETR, D-FINE, LW-DETR backbones
+    # ConvNextLayer, ConvNextV2Layer, ...ConvNext1dLayer, Qwen3OmniMoeConvNeXtBlock: no class named
+    # after ConvNeXt in either spelling subclasses GradientCheckpointingLayer anywhere.
+    r"|ConvNe[xX]t\w*(?:Layer|Block)"
+    r"|RepVggBlock"
+    r"|PyramidPoolingBlock"
+    r"|ResidualBlock"
+    r"|FPNLayer"
+    r")$"
+)
+
 _MAX_INHERITANCE_HOPS = 12
 
 
@@ -134,6 +163,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                 continue
             layer_name = inner.func.id
             if layer_name not in local_classes or not layer_name.endswith(LAYER_CLASS_SUFFIXES):
+                continue
+            if _CONV_OR_POOLING_CLASS_RE.search(layer_name):
                 continue
             if layer_name in reported:
                 continue

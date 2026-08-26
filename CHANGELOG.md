@@ -54,6 +54,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `TRF029` no longer flags a config-field parameter that is optional with a `None` default. That is an override,
+  not a second source of truth: the config stays the source for every caller that passes nothing, and it is how
+  one MLP class serves both the dense and the expert width of a MoE model
+  (`def __init__(self, config, intermediate_size=None)`). A hardcoded default such as `hidden_size: int = 1024`
+  stays flagged -- it wins over the config silently whenever the caller passes nothing -- as does any required
+  parameter. Over a transformers checkout with `cutoff_date` neutralised: 141 findings before, 124 after, the 17
+  that went being the MoE MLPs the report named (`cohere2_moe`, `deepseek_v2`, `ernie4_5_moe`, `ernie4_5_vl_moe`,
+  `blt`, `llama4`, `qwen2_moe`, ...). Closes
+  [#53](https://github.com/huggingface/transformers-mlinter/issues/53).
+
 - `TRF035` now accepts `# noqa: F401`, `F821` and `F822` in a `modular_*.py` file. A modular file is a
   generation source, not shipped code: it deliberately does not define every name it uses, so ruff's
   undefined-name family fires on correct code -- `__all__` entries the converter fills in, classes that live in

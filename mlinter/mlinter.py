@@ -452,13 +452,12 @@ def _build_rule_checks(rule_specs: dict[str, dict], deprecated_rules: frozenset[
 
 
 def _apply_rule_module_state(rule_specs: dict[str, dict], checks: dict[str, CheckFn]) -> None:
-    """Push the spec fields a rule module reads as module globals onto that module.
+    """Write each rule's spec fields onto its own module, which reads them as globals.
 
-    Every field is assigned whether or not the spec carries it. A module is imported once per process
-    and the bundled specs are applied at import, so a rule whose spec drops `cutoff_date` has to have
-    the bundled date overwritten rather than left in place -- otherwise `--rules-toml` can add a cutoff
-    but never remove one, and the exemption stays in force with nothing in the active file saying so.
-    `CUTOFF_DATE = ""` is what a rule module means by "no exemption", so that is what absence maps to.
+    A field the spec does not set is assigned too, not skipped. Skipping is the bug: modules are
+    imported once per process and the bundled specs are applied at import, so a spec file that drops
+    `cutoff_date` left the bundled date in place and `--rules-toml` could add a cutoff but never remove
+    one. A rule module spells "no cutoff" as `CUTOFF_DATE = ""`, so that is what an absent date means.
     """
     for rule_id, check_fn in checks.items():
         mod = sys.modules[check_fn.__module__]

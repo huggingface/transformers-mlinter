@@ -441,15 +441,28 @@ def _build_rule_checks(rule_specs: dict[str, dict], deprecated_rules: frozenset[
         if not callable(check_fn):
             raise ValueError(f"Module {module_name} must define a check() function.")
         mod.RULE_ID = rule_id
-        cutoff_date = rule_specs[rule_id].get("cutoff_date")
-        if cutoff_date is not None and hasattr(mod, "CUTOFF_DATE"):
-            mod.CUTOFF_DATE = cutoff_date
         checks[rule_id] = check_fn
 
     missing_checks = sorted(set(rule_specs) - set(checks))
     if missing_checks:
         raise ValueError(f"Missing check module(s) for rule id(s): {', '.join(missing_checks)}")
-    return dict(sorted(checks.items()))
+    checks = dict(sorted(checks.items()))
+    _apply_rule_module_state(rule_specs, checks)
+    return checks
+
+
+def _apply_rule_module_state(rule_specs: dict[str, dict], checks: dict[str, CheckFn]) -> None:
+    """Write each rule's spec fields onto its own module, which reads them as globals.
+
+    A field the spec does not set is assigned too, not skipped. Skipping is the bug: modules are
+    imported once per process and the bundled specs are applied at import, so a spec file that drops
+    `cutoff_date` left the bundled date in place and `--rules-toml` could add a cutoff but never remove
+    one. A rule module spells "no cutoff" as `CUTOFF_DATE = ""`, so that is what an absent date means.
+    """
+    for rule_id, check_fn in checks.items():
+        mod = sys.modules[check_fn.__module__]
+        if hasattr(mod, "CUTOFF_DATE"):
+            mod.CUTOFF_DATE = rule_specs.get(rule_id, {}).get("cutoff_date") or ""
 
 
 def _is_rule_id_name(name: str) -> bool:
@@ -501,6 +514,9 @@ def _using_rule_specs(rule_specs_path: Path):
     finally:
         globals().update(previous_state)
         _refresh_rule_id_globals()
+        # Restoring the globals is not enough: the rule modules still hold what the custom file wrote,
+        # and they are shared process-wide.
+        _apply_rule_module_state(TRF_RULE_SPECS, TRF_RULE_CHECKS)
 
 
 _activate_rule_registry(DEFAULT_RULE_SPECS_PATH)

@@ -14,9 +14,11 @@
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import date
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,6 +53,26 @@ def _write_custom_rules_toml(
 def _unwrapped(text: str) -> str:
     """CLI output with rich's console wrapping collapsed, so assertions survive any terminal width."""
     return " ".join(text.split())
+
+
+def _write_rules_toml_without_cutoffs(tmp_dir: Path) -> Path:
+    """The bundled rule specs with every `cutoff_date` line dropped, as a project overriding them would."""
+    lines = mlinter.DEFAULT_RULE_SPECS_PATH.read_text(encoding="utf-8").splitlines(keepends=True)
+    custom_rules_path = tmp_dir / "no_cutoff_rules.toml"
+    custom_rules_path.write_text(
+        "".join(line for line in lines if not line.startswith("cutoff_date")), encoding="utf-8"
+    )
+    return custom_rules_path
+
+
+def _module_cutoffs() -> dict[str, str]:
+    """What each rule module currently holds in its `CUTOFF_DATE` global."""
+    cutoffs = {}
+    for rule_id, check_fn in mlinter.TRF_RULE_CHECKS.items():
+        module = sys.modules[check_fn.__module__]
+        if hasattr(module, "CUTOFF_DATE"):
+            cutoffs[rule_id] = module.CUTOFF_DATE
+    return cutoffs
 
 
 def _write_rules_toml_with_extra(tmp_dir: Path, extra: str) -> Path:
@@ -296,6 +318,37 @@ class CheckModelingStructureTest(unittest.TestCase):
 
         self.assertNotEqual(default_digest, custom_digest)
         self.assertEqual(mlinter.ACTIVE_RULE_SPECS_PATH, mlinter.DEFAULT_RULE_SPECS_PATH)
+
+    def test_rules_toml_omitting_cutoff_date_clears_the_bundled_one(self):
+        """`--rules-toml` could add a cutoff but never remove one: the bundled value stayed in force."""
+        bundled = _module_cutoffs()
+        rules_with_a_cutoff = {rule_id for rule_id, cutoff in bundled.items() if cutoff}
+        self.assertTrue(rules_with_a_cutoff, "expected the bundled specs to configure some cutoff dates")
+        for rule_id in rules_with_a_cutoff:
+            self.assertEqual(bundled[rule_id], mlinter.TRF_RULE_SPECS[rule_id]["cutoff_date"])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_rules_toml_without_cutoffs(Path(tmp_dir))
+            with mlinter._using_rule_specs(custom_rules_path):
+                self.assertEqual(set(_module_cutoffs().values()), {""})
+
+        # Leaving the custom specs behind puts the bundled dates back: rule modules are process-wide.
+        self.assertEqual(_module_cutoffs(), bundled)
+
+    def test_rules_toml_omitting_cutoff_date_really_checks_a_grandfathered_model(self):
+        # TRF041 carries a cutoff, and a config-gated branch is the shortest thing that trips it.
+        source = "def f(self):\n    if config.two_stage:\n        self.stage = Stage()\n"
+        file_path = Path("src/transformers/models/foo/modeling_foo.py")
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2024, 1, 1)):
+            # Grandfathered under the bundled specs...
+            self.assertEqual(mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF041}), [])
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                custom_rules_path = _write_rules_toml_without_cutoffs(Path(tmp_dir))
+                with mlinter._using_rule_specs(custom_rules_path):
+                    # ... and checked once the active spec file drops the cutoff.
+                    violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF041})
+                    self.assertEqual(len(violations), 1)
+            self.assertEqual(mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF041}), [])
 
     def test_main_rejects_custom_rules_toml_with_unsupported_version(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

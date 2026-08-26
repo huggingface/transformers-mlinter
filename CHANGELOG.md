@@ -37,6 +37,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `selected_experts` and `routing_weights` are accepted, and inherited `forward` methods are resolved.
   `llama4` is allowlisted for now.
 
+### Fixed
+
+- A rules TOML passed with `--rules-toml` can now clear a rule's `cutoff_date`; dropping the key used to leave the
+  bundled date in force, silently. Rule modules are imported once per process and `_build_rule_checks` writes each
+  cutoff onto a module global, but the assignment was skipped for a spec with no `cutoff_date` -- so after the
+  bundled specs had been applied at import, the guard's intent (leave the module default alone) was unreachable and
+  an override could add a cutoff but never remove one. Over a transformers checkout with
+  `--enable-all-trf-rules`: a spec file with every `cutoff_date` line deleted reported 429 findings, the same as the
+  bundled run, where replacing the dates with `1900-01-01` reported 4296. It now reports 4296 either way. This
+  mattered in practice because `transformers` lints through `utils/check_modeling_structure.py --rules-toml
+  utils/rules.toml`, so every CI run goes through the overriding path. Pushing spec fields onto rule modules moved
+  into `_apply_rule_module_state`, which `_using_rule_specs` now also calls on the way out: restoring the module
+  globals left the rule modules themselves holding whatever the custom file wrote, and they are process-wide.
+  Closes [#58](https://github.com/huggingface/transformers-mlinter/issues/58).
+
 ### Changed
 
 - `TRF035` now accepts `# noqa: F401`, `F821` and `F822` in a `modular_*.py` file. A modular file is a

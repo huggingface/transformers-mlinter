@@ -23,6 +23,54 @@ from ._helpers import Violation, _has_rule_suppression, full_name, is_exempt_by_
 
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
+IGNORED_ATTRIBUTES: frozenset[str] = frozenset()  # Set by discovery from rules.toml ignored_attributes
+
+# Config fields that gate framework plumbing rather than architecture. A branch on one of them exists in
+# the same shape in every model that has the head or the feature -- `problem_type` picks a loss function,
+# `hidden_act` looks up an activation, `use_cache` asks whether to keep a cache -- so no checkpoint takes
+# one side and no checkpoint the other, and there is nothing for a `# CODEPATH:` note to name. Exempting
+# them here is what the rule used to ask every model to write by hand as a `# trf-ignore: TRF041` list.
+# A `# CODEPATH:` note on such a branch stays legal; it just stops being required.
+DEFAULT_EXEMPT_ATTRIBUTES = frozenset(
+    {
+        # head and loss selection
+        "problem_type",
+        "num_labels",
+        "loss_type",
+        "classifier_dropout",
+        # activation and initialisation lookups
+        "hidden_act",
+        "initializer_range",
+        # special token ids
+        "pad_token_id",
+        "bos_token_id",
+        "eos_token_id",
+        "decoder_start_token_id",
+        # generic PretrainedConfig / PreTrainedModel plumbing
+        "tie_word_embeddings",
+        "_attn_implementation",
+        "output_attentions",
+        "output_hidden_states",
+        "return_dict",
+        "use_cache",
+        "is_decoder",
+        "is_encoder_decoder",
+        "add_cross_attention",
+        "chunk_size_feed_forward",
+        "gradient_checkpointing",
+        "torch_dtype",
+        "architectures",
+        "_name_or_path",
+    }
+)
+
+# `summary_type`, `summary_use_proj`, `summary_activation`, `summary_proj_to_labels`, `summary_first_dropout`:
+# the whole family configures the same generic sequence-summary head, so it is exempted by prefix.
+EXEMPT_ATTRIBUTE_PREFIXES = ("summary_",)
+
+# Callables whose only effect is to tell the user something. A branch whose body is one of these does not
+# fork the graph, so it has no second checkpoint to name.
+WARN_FUNCTIONS = frozenset({"warn", "warn_explicit", "warning", "warning_once", "info", "debug", "error", "critical"})
 
 # Borrowed from Rust's `// SAFETY:` convention: the construct stays legal, but the author has to write
 # down the reasoning that makes it legal. Here the reasoning is which checkpoints take which path.
@@ -34,15 +82,21 @@ def _normalise_attribute(dotted: str) -> str:
     return dotted.strip().removeprefix("self.").removeprefix("config.")
 
 
+def _is_exempt_attribute(attribute: str) -> bool:
+    """Whether a config field is plumbing the rule never asks about."""
+    field = _normalise_attribute(attribute)
+    return field in DEFAULT_EXEMPT_ATTRIBUTES or field.startswith(EXEMPT_ATTRIBUTE_PREFIXES)
+
+
 def _file_scoped_ignores(source_lines: list[str], rule_id: str) -> set[str]:
     """Config attributes exempted by a module-level `# trf-ignore: <RULE> <attr>, ...` directive.
 
-    Some flags gate the same branch in every model that has a given head — `problem_type` selects a
-    loss, `hidden_act` looks up an activation — so no checkpoint diverges on them and a per-branch
-    suppression would mean repeating one comment a dozen times in a file. A directive at column 0
-    names them once, and keeps the exemption reviewable in the diff instead of buried in a global
-    config. A bare directive with no attributes is left alone for `_has_rule_suppression` to handle,
-    so this never widens an existing per-line suppression into a whole-file mute.
+    `DEFAULT_EXEMPT_ATTRIBUTES` covers the plumbing fields every model shares; this is how a model
+    exempts one of its own. When the same field gates the same non-divergent branch in several places
+    in a file, a per-branch suppression would mean repeating one comment a dozen times: a directive at
+    column 0 names the field once, and keeps the exemption reviewable in the diff instead of buried in
+    a global config. A bare directive with no attributes is left alone for `_has_rule_suppression` to
+    handle, so this never widens an existing per-line suppression into a whole-file mute.
     """
     # ponytail: lives here until a second rule wants file-scoped subjects, then lift into _helpers.
     token = f"trf-ignore: {rule_id}".lower()
@@ -92,6 +146,42 @@ def _is_default_coalesce(node: ast.expr) -> bool:
     return False
 
 
+def _is_warn_call(node: ast.stmt) -> bool:
+    """Whether `node` is a bare `logger.warning(...)` / `warnings.warn(...)`-style call."""
+    if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+        return False
+    func = node.value.func
+    return isinstance(func, ast.Attribute) and func.attr in WARN_FUNCTIONS
+
+
+def _is_message_assignment(node: ast.stmt) -> bool:
+    """Whether `node` binds a local name, as guards do when they build an error message first."""
+    if isinstance(node, ast.AnnAssign):
+        return isinstance(node.target, ast.Name)
+    if not isinstance(node, ast.Assign):
+        return False
+    return all(isinstance(target, ast.Name) for target in node.targets)
+
+
+def _is_guard_branch(node: ast.If) -> bool:
+    """Whether `node` rejects or warns about a configuration instead of forking the graph.
+
+    `if config.num_experts and not config.expert_capacity: raise ValueError(...)` is validation: one side
+    aborts, so every checkpoint that gets past the branch took the same path and there is no divergence to
+    write down. The same holds for a body that only logs. An `else` disqualifies it -- that is a real fork,
+    with the guard shape borrowed for one of its two arms.
+    """
+    if node.orelse or not node.body:
+        return False
+    if any(isinstance(statement, ast.Raise) for statement in node.body):
+        # Statements around the raise can only be message building: the branch leaves by exception.
+        return all(
+            isinstance(statement, ast.Raise) or _is_warn_call(statement) or _is_message_assignment(statement)
+            for statement in node.body
+        )
+    return all(_is_warn_call(statement) for statement in node.body)
+
+
 def _config_attributes(test: ast.expr) -> list[str]:
     """Every `config.*` / `self.config.*` attribute the branch condition reads.
 
@@ -136,11 +226,16 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     if is_exempt_by_cutoff(file_path, CUTOFF_DATE):
         return []
 
-    ignored_attributes = _file_scoped_ignores(source_lines, RULE_ID)
+    # The spec-level list extends the built-in exempt set for a project that keeps its own rules.toml.
+    ignored_attributes = _file_scoped_ignores(source_lines, RULE_ID) | {
+        _normalise_attribute(attribute) for attribute in IGNORED_ATTRIBUTES
+    }
 
     violations: list[Violation] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.If):
+            if _is_guard_branch(node):
+                continue
             kind = "branch"
         elif isinstance(node, ast.IfExp):
             if _is_default_coalesce(node):
@@ -154,7 +249,9 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
             continue
         # Only the attributes still on the hook can be reported: a branch gated on an exempt field and
         # a live one still has to name its checkpoints, so it is skipped only when every field is exempt.
-        reportable = [a for a in attributes if _normalise_attribute(a) not in ignored_attributes]
+        reportable = [
+            a for a in attributes if _normalise_attribute(a) not in ignored_attributes and not _is_exempt_attribute(a)
+        ]
         if not reportable:
             continue
         attribute = reportable[0]

@@ -54,6 +54,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `TRF034` now reports only the model's token-mixing trunk, and only where gradient checkpointing can run.
+  It flagged any `*Layer`/`*Block` stacked in an `nn.ModuleList`, which is two populations wearing the same
+  shape. A model that never sets `supports_gradient_checkpointing = True` is now skipped -- it raises from
+  `gradient_checkpointing_enable()` rather than skipping a layer, and 39 of the 76 flagged models were in
+  that state. So is a layer holding running statistics, since recomputation folds every batch in twice:
+  `SpeechT5BatchNormConvLayer` holds an `nn.BatchNorm1d`, so complying corrupted them. And the layer has to
+  hold the module doing the mixing, which drops conv backbones, DPT heads, vocoder stacks and pooling
+  blocks -- checkpointing those is the model author's call, not a defect. Mixing is read from
+  `self.x = Y(...)` assignments, not mentions like `config._attn_implementation`, and follows a block
+  delegating to a child (`Florence2VisionBlock`) and the attention-free trunks that name a modulation or
+  mixer module (`FocalNetLayer`). Over a transformers checkout with every `cutoff_date` neutralised: 103
+  findings over 76 models before, 20 over 19 after; with the bundled cutoff, 7 become 1 and the allowlist
+  drops from ten models to `x_clip`.
+
 - `TRF029` no longer flags a config-field parameter that is optional with a `None` default. That is an override,
   not a second source of truth: the config stays the source for every caller that passes nothing, and it is how
   one MLP class serves both the dense and the expert width of a MoE model

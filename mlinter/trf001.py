@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF001: Class-level config_class on <Model>PreTrainedModel should match <Model>Config naming."""
+"""TRF001: config_class on <Model>PreTrainedModel should match <Model>Config naming."""
 
 import ast
 from pathlib import Path

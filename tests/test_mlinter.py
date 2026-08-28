@@ -37,7 +37,7 @@ def _write_custom_rules_toml(
     text = mlinter.DEFAULT_RULE_SPECS_PATH.read_text(encoding="utf-8")
     if trf001_description is not None:
         text = text.replace(
-            'description = "Class-level config_class on <Model>PreTrainedModel should match <Model>Config naming."',
+            'description = "config_class on <Model>PreTrainedModel should match <Model>Config naming."',
             f'description = "{trf001_description}"',
             1,
         )
@@ -299,7 +299,7 @@ class CheckModelingStructureTest(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("TRF001: Custom config_class guidance. (default: disabled)", rendered)
         self.assertIn(
-            "Class-level config_class on <Model>PreTrainedModel should match <Model>Config naming.",
+            "config_class on <Model>PreTrainedModel should match <Model>Config naming.",
             mlinter.format_rule_summary("TRF001"),
         )
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF057: Public model, config, output and processor classes and their public methods must be decorated with @auto_docstring."""
+"""TRF057: Public model, config, output and processor classes and their public methods must carry @auto_docstring."""
 
 import ast
 import re

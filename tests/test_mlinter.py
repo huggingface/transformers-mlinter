@@ -139,6 +139,7 @@ class CheckModelingStructureTest(unittest.TestCase):
         self.assertEqual(public_api.TRF055, "TRF055")
         self.assertEqual(public_api.TRF056, "TRF056")
         self.assertEqual(public_api.TRF057, "TRF057")
+        self.assertEqual(public_api.TRF058, "TRF058")
         self.assertEqual(public_api.TRF059, "TRF059")
 
     def test_package_root_all_lists_supported_api(self):
@@ -190,6 +191,7 @@ class CheckModelingStructureTest(unittest.TestCase):
         self.assertIn("TRF055", public_api.__all__)
         self.assertIn("TRF056", public_api.__all__)
         self.assertIn("TRF057", public_api.__all__)
+        self.assertIn("TRF058", public_api.__all__)
         self.assertIn("TRF059", public_api.__all__)
         self.assertNotIn("_collect_class_bases", public_api.__all__)
         self.assertNotIn("_rule_id", public_api.__all__)

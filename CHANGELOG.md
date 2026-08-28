@@ -5,7 +5,7 @@ All notable changes to `transformers-mlinter` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.5] - 2026-08-28
 
 ### Added
 
@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `MoeExpertsParallel` gradient-transforms positional argument 3, so another signature transforms the wrong
   tensor. Aliases such as `routing_weights` are accepted, inherited `forward` is resolved, `llama4` allowlisted.
 
-### Changed
+### Improved
 
 - `TRF038` now covers `tokenization_*.py`, the last model-directory file type it missed: a tokenizer source
   needs a matching `tests/models/<model>/test_tokenization_*.py`, and `XxxTokenizer`/`XxxTokenizerFast` in a

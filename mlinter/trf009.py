@@ -105,7 +105,7 @@ def _model_dir_defining(name: str, known_models: set[str]) -> str | None:
     flattened = name.replace("_", "").lower()
     candidates = sorted(
         (model_dir for model_dir in known_models if flattened.startswith(model_dir.replace("_", "").lower())),
-        key=len,
+        key=lambda model_dir: len(model_dir),
         reverse=True,
     )
     return next((candidate for candidate in candidates if name in _defined_class_names(candidate)), None)

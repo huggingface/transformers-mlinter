@@ -9,150 +9,99 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Extended `TRF038` to `tokenization_*.py`: a tokenizer source file now needs a matching
-  `tests/models/<model>/test_tokenization_*.py`, closing the last model-directory file type the rule did not
-  cover. `tokenization_<name>_fast.py` maps to `test_tokenization_<name>.py` rather than a fast test file of its
-  own, since that is where a fast tokenizer is exercised, and a `tokenization_utils*.py` helper module (such as
-  `roformer/tokenization_utils.py`, which holds a Jieba pre-tokenizer) owns no test file. `modular_*.py` files
-  gained the matching class-name mapping, so `XxxTokenizer` / `XxxTokenizerFast` defined in a modular file also
-  ask for a tokenizer test. Ships with `tokenization_*.py` added to `MODELING_PATTERNS`, which widens discovery
-  for every rule -- all other rules gate on the file-name prefix or on AST content, and a full run over
-  transformers confirmed the widening adds no findings outside `TRF038`. The violation message now follows the
-  kind of test file that is missing, asking for a small hand-written vocabulary rather than a dummy config and
-  random weights when the gap is a tokenizer test. Requested in
-  [huggingface/transformers-mlinter#23](https://github.com/huggingface/transformers-mlinter/issues/23).
-- Added `TRF058`, which flags `register_buffer("<name>", ...)` calls in `modeling_*.py` and `modular_*.py` and asks for
-  `<name> = nn.Buffer(...)` instead. Since torch>=2.5 a buffer can be declared by plain attribute assignment, the same
-  way `nn.Parameter` is, and a buffer that is an attribute can be inherited and tweaked in a modular file instead of
-  forcing a redefinition of the whole `__init__`. Any receiver is checked (`self`, or another module such as
-  `layer.mamba`); calls whose buffer name is computed at runtime (a variable or an f-string, e.g. one buffer per layer
-  inside a loop) have no attribute-assignment equivalent and are exempt. `falcon_h1` and `pp_doclayout_v2` are
-  allowlisted pending conversion of their two remaining calls. Requested in
+- `TRF058`: flags `register_buffer("<name>", ...)` in `modeling_*.py` and `modular_*.py` and asks for
+  `<name> = nn.Buffer(...)`. Since torch>=2.5 a buffer can be a plain attribute, like `nn.Parameter`, so a
+  modular file can tweak it by inheritance instead of redefining `__init__`. Any receiver is checked; a buffer
+  whose name is computed at runtime has no attribute form and is exempt. `falcon_h1` and `pp_doclayout_v2` are
+  allowlisted. Requested in
   [huggingface/transformers#47722](https://github.com/huggingface/transformers/pull/47722).
-
-- Added `TRF059`, which checks that a routed `*Experts` class in a model whose tensor-parallel plan assigns
-  `moe_tp_experts` takes hidden states, top-k indices and top-k routing weights as the first three positional
-  arguments of its `forward`. `MoeExpertsParallel` applies a gradient transform to positional argument 3, so a
-  different signature silently transforms the wrong tensor or none at all. Common aliases such as
-  `selected_experts` and `routing_weights` are accepted, and inherited `forward` methods are resolved.
-  `llama4` is allowlisted for now.
-
-### Fixed
-
-- A rules TOML passed with `--rules-toml` can now clear a rule's `cutoff_date`; dropping the key used to leave the
-  bundled date in force, silently. Rule modules are imported once per process and `_build_rule_checks` writes each
-  cutoff onto a module global, but the assignment was skipped for a spec with no `cutoff_date` -- so after the
-  bundled specs had been applied at import, the guard's intent (leave the module default alone) was unreachable and
-  an override could add a cutoff but never remove one. Over a transformers checkout with
-  `--enable-all-trf-rules`: a spec file with every `cutoff_date` line deleted reported 429 findings, the same as the
-  bundled run, where replacing the dates with `1900-01-01` reported 4296. It now reports 4296 either way. This
-  mattered in practice because `transformers` lints through `utils/check_modeling_structure.py --rules-toml
-  utils/rules.toml`, so every CI run goes through the overriding path. Pushing spec fields onto rule modules moved
-  into `_apply_rule_module_state`, which `_using_rule_specs` now also calls on the way out: restoring the module
-  globals left the rule modules themselves holding whatever the custom file wrote, and they are process-wide.
-  Closes [#58](https://github.com/huggingface/transformers-mlinter/issues/58).
+- `TRF059`: in a model whose tensor-parallel plan assigns `moe_tp_experts`, a routed `*Experts` class must take
+  hidden states, top-k indices and top-k routing weights as the first three positional arguments of `forward`.
+  `MoeExpertsParallel` gradient-transforms positional argument 3, so another signature transforms the wrong
+  tensor. Aliases such as `routing_weights` are accepted, inherited `forward` is resolved, `llama4` allowlisted.
 
 ### Changed
 
-- `TRF034` now reports only the model's token-mixing trunk, and only where gradient checkpointing can run.
-  It flagged any `*Layer`/`*Block` stacked in an `nn.ModuleList`, which is two populations wearing the same
-  shape. A model that never sets `supports_gradient_checkpointing = True` is now skipped -- it raises from
-  `gradient_checkpointing_enable()` rather than skipping a layer, and 39 of the 76 flagged models were in
-  that state. So is a layer holding running statistics, since recomputation folds every batch in twice:
-  `SpeechT5BatchNormConvLayer` holds an `nn.BatchNorm1d`, so complying corrupted them. And the layer has to
-  hold the module doing the mixing, which drops conv backbones, DPT heads, vocoder stacks and pooling
-  blocks -- checkpointing those is the model author's call, not a defect. Mixing is read from
-  `self.x = Y(...)` assignments, not mentions like `config._attn_implementation`, and follows a block
-  delegating to a child (`Florence2VisionBlock`) and the attention-free trunks that name a modulation or
-  mixer module (`FocalNetLayer`). Over a transformers checkout with every `cutoff_date` neutralised: 103
-  findings over 76 models before, 20 over 19 after; with the bundled cutoff, 7 become 1 and the allowlist
-  drops from ten models to `x_clip`.
-
-- `TRF029` no longer flags a config-field parameter that is optional with a `None` default. That is an override,
-  not a second source of truth: the config stays the source for every caller that passes nothing, and it is how
-  one MLP class serves both the dense and the expert width of a MoE model
-  (`def __init__(self, config, intermediate_size=None)`). A hardcoded default such as `hidden_size: int = 1024`
-  stays flagged -- it wins over the config silently whenever the caller passes nothing -- as does any required
-  parameter. Over a transformers checkout with `cutoff_date` neutralised: 141 findings before, 124 after, the 17
-  that went being the MoE MLPs the report named (`cohere2_moe`, `deepseek_v2`, `ernie4_5_moe`, `ernie4_5_vl_moe`,
-  `blt`, `llama4`, `qwen2_moe`, ...). Closes
-  [#53](https://github.com/huggingface/transformers-mlinter/issues/53).
-
-- `TRF035` now accepts `# noqa: F401`, `F821` and `F822` in a `modular_*.py` file. A modular file is a
-  generation source, not shipped code: it deliberately does not define every name it uses, so ruff's
-  undefined-name family fires on correct code -- `__all__` entries the converter fills in, classes that live in
-  the parent model, imports kept only to be re-exported -- and there is no underlying issue to fix, which is what
-  the message asked for. `modeling_*.py` and `configuration_*.py` are unchanged, a `# noqa` naming any other code
-  is still reported (on the codes that are left, so the message says what to fix), and a bare `# noqa` is still
-  reported everywhere, since it hides every future violation on the line too. In a modular file that bare-`# noqa`
-  message now asks for the code instead of a rewrite, which is the actionable ask: two of the six in transformers
-  are an exempt code left unwritten. Over a transformers checkout with `cutoff_date` neutralised: 65 findings
-  before, 10 after (-85%), the survivors being six bare `# noqa`, two `F841` in `vivit` and two `E712` in
-  `esmfold`. The allowlist is now empty -- `hunyuan_vl`, `nemotron3_5_asr` and `zaya` were each there for a single
-  `F401` or `F821` in a modular file. Closes
-  [#55](https://github.com/huggingface/transformers-mlinter/issues/55).
-
-- Narrowed `TRF041` so it stops asking for a `# CODEPATH:` note where nothing diverges. Two exemptions:
-  framework plumbing fields (`problem_type`, `hidden_act`, `num_labels`, `use_cache`, the special token ids and
-  the rest of `DEFAULT_EXEMPT_ATTRIBUTES` in `mlinter/trf041.py`), and guard branches -- an `if` with no `else`
-  whose body only raises or only warns/logs. Over a transformers checkout with `cutoff_date` neutralised, which
-  is what a new model faces: 1749 findings before, 907 after (-48%). `openai`, `timm_backbone`, `timm_wrapper`
-  and `vitpose_backbone` came off the allowlist, and a rule table may now carry `ignored_attributes = [...]` so a
+- `TRF038` now covers `tokenization_*.py`, the last model-directory file type it missed: a tokenizer source
+  needs a matching `tests/models/<model>/test_tokenization_*.py`, and `XxxTokenizer`/`XxxTokenizerFast` in a
+  `modular_*.py` file ask for one too. `tokenization_<name>_fast.py` maps to `test_tokenization_<name>.py`;
+  `tokenization_utils*.py` helpers own no test file. The message now asks for a small hand-written vocabulary
+  rather than a dummy config. Adding `tokenization_*.py` to `MODELING_PATTERNS` widens discovery for every rule,
+  with no findings outside `TRF038` over transformers. Closes
+  [#23](https://github.com/huggingface/transformers-mlinter/issues/23).
+- `TRF009` widened on both axes it missed. It runs on every file in a model directory, not just
+  `modeling_*.py`, since a config importing another model's config couples them just as tightly
+  (`modular_*.py` stays exempt; `convert_*.py` and `__init__.py` are out of scope). It also catches
+  `from transformers import CLIPTextModelWithProjection`, resolving the class name to an owning directory and
+  confirming it against that directory's classes, so a shared name (`BitsAndBytesConfig` vs `bit`) is not
+  reported and an unresolvable one is left alone. `timm_wrapper` joins `auto` as an always-exempt target, and
+  files inside `auto` are skipped. Fourteen real cross-model imports surfaced in transformers. Closes
+  [#5](https://github.com/huggingface/transformers-mlinter/issues/5) and
+  [#39](https://github.com/huggingface/transformers-mlinter/issues/39).
+- `generation_*.py` files in a model directory are now discovered; the ten in transformers hold model code but
+  matched no `MODELING_PATTERNS` entry. Only `TRF009` reacts, reporting two real cross-model imports
+  (`nemotron3_5_asr` from `nemotron_asr_streaming`, and that from `parakeet`). Closes
+  [#49](https://github.com/huggingface/transformers-mlinter/issues/49).
+- `TRF034` now reports only the token-mixing trunk, and only where gradient checkpointing can run. It flagged
+  any `*Layer`/`*Block` in an `nn.ModuleList`, which is two populations wearing the same shape. Skipped now: a
+  model that never sets `supports_gradient_checkpointing = True` (39 of the 76 flagged), a layer holding
+  running statistics (recomputation folds every batch in twice, corrupting `SpeechT5BatchNormConvLayer`), and
+  any layer that does not itself hold the mixing module -- conv backbones, DPT heads, vocoder stacks, pooling
+  blocks. Mixing is read from `self.x = Y(...)` assignments and follows delegation to a child. With every
+  `cutoff_date` neutralised: 103 findings over 76 models before, 20 over 19 after; with the bundled cutoff, 7
+  become 1 and the allowlist drops from ten models to `x_clip`.
+- `TRF041` stops asking for a `# CODEPATH:` note where nothing diverges. Two exemptions: framework plumbing
+  fields (`problem_type`, `hidden_act`, `use_cache`, the special token ids and the rest of
+  `DEFAULT_EXEMPT_ATTRIBUTES`), and guard branches -- an `if` with no `else` whose body only raises or only
+  warns. With `cutoff_date` neutralised, which is what a new model faces: 1749 findings before, 907 after
+  (-48%), and four models came off the allowlist. A rule table may now carry `ignored_attributes = [...]` so a
   project with its own `rules.toml` can extend the exempt list without an mlinter release. Closes
   [#52](https://github.com/huggingface/transformers-mlinter/issues/52).
-
-- Rewrote the `what_it_does` and `why_bad` prose in `rules.toml`, cutting it by a fifth overall and far more than
-  that where it had run away: `TRF009` 3244 -> 1220 characters, `TRF041` 2418 -> 1457, `TRF038` 1940 -> 1301,
-  `TRF042` 1620 -> 1032. No rule's explanation is over 1500 characters any more, down from 3244. What went is
-  repeated justification, review-culture asides ("reviewers ask for this on every new model") and release trivia
-  that belongs in this file; what stayed is the scope, the exemptions and the fix. Every rule page now reads as
-  two tight paragraphs -- what is flagged and what is exempt, then what breaks and what to do instead -- so a
-  contributor landing on one from a failing CI job gets the answer without wading to it.
-
-- `generation_*.py` files in a model directory are now discovered, so rules see them for the first time. There are
-  ten in transformers (`generation_whisper.py`, `generation_parakeet.py`, `generation_csm.py`, ...) and they hold
-  model implementation code, but no pattern in `MODELING_PATTERNS` matched them. `TRF009` gained the matching prefix
-  and reports the two real cross-model imports the widening exposes: `nemotron3_5_asr` importing from
-  `nemotron_asr_streaming`, and that in turn from `parakeet`. A full run over transformers confirms the widening
-  adds nothing else -- 40 findings before, 42 after, both new ones `TRF009` -- so the dozen rules that gate on AST
-  content rather than on a file-name prefix are unaffected. Note the pattern also claims a `generation_utils.py`
-  helper, which matters mainly when linting a standalone model repository. Closes
-  [#49](https://github.com/huggingface/transformers-mlinter/issues/49).
-
-- Widened `TRF009` on both axes it was missing. It now runs on every file in a model directory --
-  `configuration_*.py`, `processing_*.py`, `image_processing_*.py`, `video_processing_*.py`,
-  `feature_extraction_*.py` and `tokenization_*.py` as well as `modeling_*.py` -- since a config that imports
-  another model's config couples the two models just as tightly as a modeling file that does; `modular_*.py`
-  stays exempt, while `convert_*.py` and `__init__.py` are out of scope -- a conversion script legitimately
-  builds a checkpoint out of whatever the original release shipped, and an `__init__.py` alias is the same
-  coupling already reported on the tokenizer file itself. It also recognises the public-API form,
-  `from transformers import CLIPTextModelWithProjection`, which reached another model's implementation without
-  naming its package and so went unreported. Because that form gives only a class name, the owning directory is
-  recovered from the name and then confirmed against the classes that directory really defines, so a shared class
-  that merely reads like a model prefix (`BitsAndBytesConfig` vs the `bit` directory) is not reported, and a name
-  that cannot be resolved -- outside a transformers checkout, say -- is left alone rather than guessed at. The
-  relative form now also covers `from ...models.other.modeling_other import X`, which names the models package
-  on the way up. `timm_wrapper` joins `auto` as an always-exempt import target: it is the adapter that exposes any timm
-  backbone as a transformers model, so `TimmWrapperConfig` names a shared entry point the way `AutoConfig`
-  does; files inside `auto` are now skipped outright, since naming every model's classes is what that
-  package is for. Fourteen real cross-model imports in transformers were found by the widening: six in
-  `configuration_*.py` and `processing_*.py` files, six older tokenizers that subclass another model's
-  tokenizer (`bart` from `roberta`, `fnet` from `albert`, `convbert`/`distilbert`/`mobilebert`/`squeezebert`
-  from `bert`), and two the `from transformers import CLIP*` form in `sam3`. Requested in [#5](https://github.com/huggingface/transformers-mlinter/issues/5) and
-  [#39](https://github.com/huggingface/transformers-mlinter/issues/39).
+- `TRF029` no longer flags a config-field parameter that is optional with a `None` default. That is an
+  override, not a second source of truth, and it is how one MLP class serves both the dense and the expert
+  width of a MoE model (`def __init__(self, config, intermediate_size=None)`). A hardcoded default such as
+  `hidden_size: int = 1024` stays flagged, as does any required parameter. With `cutoff_date` neutralised: 141
+  findings before, 124 after, the 17 that went all MoE MLPs. Closes
+  [#53](https://github.com/huggingface/transformers-mlinter/issues/53).
+- `TRF035` now accepts `# noqa: F401`, `F821` and `F822` in a `modular_*.py` file. A modular file is a
+  generation source, not shipped code: it deliberately does not define every name it uses, so ruff's
+  undefined-name family fires on correct code with nothing to fix. `modeling_*.py` and `configuration_*.py` are
+  unchanged, any other code is still reported, and a bare `# noqa` is still reported everywhere -- in a modular
+  file it now asks for the code rather than a rewrite. With `cutoff_date` neutralised: 65 findings before, 10
+  after (-85%), and the allowlist is now empty. Closes
+  [#55](https://github.com/huggingface/transformers-mlinter/issues/55).
+- Rewrote the `what_it_does` and `why_bad` prose in `rules.toml`, cutting it by a fifth overall and much more
+  where it had run away (`TRF009` 3244 -> 1220 characters, `TRF041` 2418 -> 1457). No explanation is over 1500
+  characters any more, down from 3244. What went is repeated justification, review-culture asides and release
+  trivia that belongs in this file; what stayed is the scope, the exemptions and the fix.
 
 ### Fixed
 
-- A retired rule keeps its page on the docs site instead of disappearing from it. `TRF054` vanished
-  entirely when it was deprecated, so anyone meeting the id in an old CI log or an existing
-  `# trf-ignore: TRF054` comment got a 404 rather than an explanation. Deprecated rules now appear in a
-  `Removed rules` table on the rule index and get a generated page that gives the removal reason, says
-  the id no longer runs and that asking for it is an error, and notes that leftover suppression comments
-  are harmless. They stay out of the headline rule count and out of the filterable table of live rules.
-  The tombstone's `description` in `rules.toml` is the published prose, and is exposed as
-  `mlinter.DEPRECATED_TRF_RULE_SPECS` for the generator to read; a tombstone with no `description` falls
-  back to a generic line.
-
+- A rules TOML passed with `--rules-toml` can now clear a rule's `cutoff_date`; dropping the key used to leave
+  the bundled date in force, silently. Rule modules are imported once per process and `_build_rule_checks`
+  writes each cutoff onto a module global, but the assignment was skipped for a spec with no `cutoff_date`, so
+  an override could add a cutoff but never remove one. A spec file with every `cutoff_date` deleted reported
+  429 findings over transformers, the same as the bundled run; it now reports 4296. This mattered because
+  `transformers` lints through `--rules-toml utils/rules.toml`, so every CI run takes the overriding path.
+  Closes [#58](https://github.com/huggingface/transformers-mlinter/issues/58).
+- `TRF018`, `TRF020`, `TRF026` and `TRF034` no longer report a modular class whose base is imported from
+  another model and cannot be resolved; an unresolved imported base is now inconclusive rather than proof that
+  the inherited behavior is absent. Closes
+  [#27](https://github.com/huggingface/transformers-mlinter/issues/27).
+- `TRF034` follows a relative imported base such as `from ..llama.modeling_llama import LlamaDecoderLayer`
+  across sibling model files before reporting, so inheritance is tri-state: reaches
+  `GradientCheckpointingLayer`, resolves without it, or unknown. A genuinely unresolved chain still fails open.
+  Closes [#36](https://github.com/huggingface/transformers-mlinter/issues/36).
+- `TRF031` no longer asks for a `ModelOutput` conversion that could not compile. A dataclass with two or more
+  required fields is skipped, `ClassVar` fields do not count, and `dataclasses.field()` is read correctly
+  (bare `field()` is required, `field(default=...)` is not). Closes
+  [#37](https://github.com/huggingface/transformers-mlinter/issues/37).
+- A retired rule keeps its page on the docs site instead of disappearing from it: `TRF054` vanished when it was
+  deprecated, so an id met in an old CI log or a leftover `# trf-ignore: TRF054` gave a 404. Deprecated rules
+  now appear in a `Removed rules` table on the rule index and get a generated page giving the removal reason
+  and saying the id no longer runs, while staying out of the headline rule count and the table of live rules.
+  The tombstone's `description` in `rules.toml` is the published prose, exposed as
+  `mlinter.DEPRECATED_TRF_RULE_SPECS`.
 
 ## [0.1.4] - 2026-08-17
 

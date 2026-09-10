@@ -126,7 +126,7 @@ class FooImageProcessor(BaseImageProcessor):
         self.assertIn("do_convert_rgb", trf016[0].message)
         self.assertIn("_preprocess_image_like_inputs()", trf016[0].message)
 
-    def test_trf016_still_flags_video_do_convert_rgb_without_reference(self):
+    def test_trf016_allows_video_do_convert_rgb_handled_by_base_prepare_pipeline(self):
         source = """
 class FooVideoProcessor(BaseVideoProcessor):
     do_convert_rgb = True
@@ -137,6 +137,21 @@ class FooVideoProcessor(BaseVideoProcessor):
         trf016 = self._run(mlinter.TRF016, source, file_name="video_processing_foo.py")
         self.assertEqual(len(trf016), 1)
         self.assertIn("do_convert_rgb", trf016[0].message)
+
+    def test_trf016_allows_video_do_convert_rgb_in_custom_prepare_override(self):
+        source = """
+class FooVideoProcessor(BaseVideoProcessor):
+    do_convert_rgb = True
+
+    def _prepare_input_videos(self, videos, do_convert_rgb, **kwargs):
+        videos = self._prepare_input_videos(videos=videos, do_convert_rgb=do_convert_rgb)
+        return videos
+
+    def _preprocess(self, videos, **kwargs):
+        return videos
+"""
+        trf016 = self._run(mlinter.TRF016, source, file_name="videos_processing_foo.py")
+        self.assertEqual(trf016, [])
 
     def test_trf016_allows_delegating_flag_handling_to_super(self):
         source = """

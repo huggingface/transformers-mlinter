@@ -126,7 +126,7 @@ class FooImageProcessor(BaseImageProcessor):
         self.assertIn("do_convert_rgb", trf016[0].message)
         self.assertIn("_preprocess_image_like_inputs()", trf016[0].message)
 
-    def test_trf016_still_flags_video_do_convert_rgb_without_reference(self):
+    def test_trf016_allows_video_do_convert_rgb_handled_by_base_prepare_pipeline(self):
         source = """
 class FooVideoProcessor(BaseVideoProcessor):
     do_convert_rgb = True
@@ -135,8 +135,22 @@ class FooVideoProcessor(BaseVideoProcessor):
         return videos
 """
         trf016 = self._run(mlinter.TRF016, source, file_name="video_processing_foo.py")
-        self.assertEqual(len(trf016), 1)
-        self.assertIn("do_convert_rgb", trf016[0].message)
+        self.assertEqual(trf016, [])
+
+    def test_trf016_allows_video_do_convert_rgb_in_custom_prepare_override(self):
+        source = """
+class FooVideoProcessor(BaseVideoProcessor):
+    do_convert_rgb = True
+
+    def _prepare_input_videos(self, videos, do_convert_rgb, **kwargs):
+        videos = self._prepare_input_videos(videos=videos, do_convert_rgb=do_convert_rgb)
+        return videos
+
+    def _preprocess(self, videos, **kwargs):
+        return videos
+"""
+        trf016 = self._run(mlinter.TRF016, source, file_name="videos_processing_foo.py")
+        self.assertEqual(trf016, [])
 
     def test_trf016_allows_delegating_flag_handling_to_super(self):
         source = """
@@ -200,14 +214,14 @@ class FooVideoProcessor(BaseVideoProcessor):
         file_path = Path("src/transformers/models/foo/video_processing_foo.py")
         violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF016})
         trf016 = sorted(v.message for v in violations if v.rule_id == mlinter.TRF016)
-        self.assertEqual(len(trf016), 4)
+        self.assertEqual(len(trf016), 3)
         self.assertTrue(all("FooVideoProcessor" in m for m in trf016))
         flag_names = {
             flag
             for flag in ("do_resize", "do_rescale", "do_normalize", "do_convert_rgb")
             if any(flag in m for m in trf016)
         }
-        self.assertEqual(flag_names, {"do_resize", "do_rescale", "do_normalize", "do_convert_rgb"})
+        self.assertEqual(flag_names, {"do_resize", "do_rescale", "do_normalize"})
 
     def test_trf016_skips_non_bool_do_attribute(self):
         source = """

@@ -39,7 +39,7 @@ _PROCESSOR_FILE_PREFIXES = ("image_processing_", "video_processing_")
 _IMAGE_PROCESSOR_FILE_PREFIX = "image_processing_"
 
 _OVERRIDABLE_METHODS = ("_preprocess", "preprocess")
-_IMAGE_PREP_METHODS = ("_prepare_image_like_inputs", "_preprocess_image_like_inputs")
+_VISION_PREP_METHODS = ("_prepare_image_like_inputs", "_preprocess_image_like_inputs", "_prepare_input_videos")
 
 
 def _is_processor_file(file_path: Path) -> bool:
@@ -95,11 +95,12 @@ def _function_forwards_flag_to_methods(
     return False
 
 
-def _image_do_convert_rgb_override(methods: dict[str, ast.FunctionDef]) -> ast.FunctionDef | None:
-    """Return the override that drops `do_convert_rgb`, or None when the image processor
-    still routes the flag through the shared image-preparation pipeline."""
+def _do_convert_rgb_override(methods: dict[str, ast.FunctionDef]) -> ast.FunctionDef | None:
+    """Return the override that drops `do_convert_rgb`, or None when the processor
+    still routes the flag through the shared preparation pipeline. Applies to both
+    - image and video processing files."""
     preprocess = methods.get("preprocess")
-    prep_override = methods.get("_preprocess_image_like_inputs")
+    prep_override = methods.get("_preprocess_image_like_inputs") or methods.get("_prepare_input_videos")
 
     if preprocess is not None:
         if not (
@@ -107,19 +108,19 @@ def _image_do_convert_rgb_override(methods: dict[str, ast.FunctionDef]) -> ast.F
             or _function_forwards_flag_to_methods(
                 preprocess,
                 "do_convert_rgb",
-                ("preprocess", "_preprocess_image_like_inputs", "_prepare_image_like_inputs"),
+                ("preprocess", "_preprocess_image_like_inputs", "_prepare_image_like_inputs", "_prepare_input_videos"),
             )
         ):
             return preprocess
 
-        # If preprocess delegates back into the image-preparation path, a custom
-        # _preprocess_image_like_inputs() override still needs to thread the flag through.
+        # If preprocess delegates back into the BaseClass preparation path, a custom
+        # `_preprocess_inputs` override still needs to thread the flag through.
         if prep_override is not None and _function_forwards_flag_to_methods(
-            preprocess, "do_convert_rgb", ("preprocess", "_preprocess_image_like_inputs")
+            preprocess, "do_convert_rgb", ("preprocess", "_preprocess_image_like_inputs", "_prepare_input_videos")
         ):
             if not (
                 _function_uses_name(prep_override, "do_convert_rgb")
-                or _function_forwards_flag_to_methods(prep_override, "do_convert_rgb", _IMAGE_PREP_METHODS)
+                or _function_forwards_flag_to_methods(prep_override, "do_convert_rgb", _VISION_PREP_METHODS)
             ):
                 return prep_override
         return None
@@ -127,7 +128,7 @@ def _image_do_convert_rgb_override(methods: dict[str, ast.FunctionDef]) -> ast.F
     if prep_override is not None:
         if not (
             _function_uses_name(prep_override, "do_convert_rgb")
-            or _function_forwards_flag_to_methods(prep_override, "do_convert_rgb", _IMAGE_PREP_METHODS)
+            or _function_forwards_flag_to_methods(prep_override, "do_convert_rgb", _VISION_PREP_METHODS)
         ):
             return prep_override
 
@@ -163,8 +164,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         for flag_name, flag_value in flags.items():
             if flag_name in _BASE_HANDLED_FLAGS:
                 continue
-            if flag_name == "do_convert_rgb" and _is_image_processor_file(file_path):
-                image_override = _image_do_convert_rgb_override(methods)
+            if flag_name == "do_convert_rgb":
+                image_override = _do_convert_rgb_override(methods)
                 if image_override is None:
                     continue
                 override = image_override

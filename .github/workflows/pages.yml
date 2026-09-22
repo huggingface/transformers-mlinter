@@ -48,7 +48,7 @@ jobs:
           python -m pip install -e .
           python scripts/build_docs.py
 
-      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b  # v1.321.0
+      - uses: ruby/setup-ruby@984c0c890880bbf811283d6f09c4607c62d210a4  # v1.323.0
         with:
           ruby-version: "3.3"
           bundler-cache: true
@@ -117,4 +117,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128  # v5.0.0
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346  # v5.0.1

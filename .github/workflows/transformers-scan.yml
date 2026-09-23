@@ -12,11 +12,13 @@ on:
         required: false
         default: 'main'
 
-permissions:
-  contents: read
+
+permissions: {}
 
 jobs:
   scan:
+    permissions:
+      contents: read
     name: Run all rules against huggingface/transformers
     runs-on: ubuntu-latest
     timeout-minutes: 20

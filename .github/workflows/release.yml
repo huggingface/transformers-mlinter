@@ -7,8 +7,12 @@ on:
     branches:
       - "v*-release"
 
+permissions: {}
+
 jobs:
   build_and_test:
+    permissions:
+      contents: read
     name: build release
     runs-on: ubuntu-latest
 

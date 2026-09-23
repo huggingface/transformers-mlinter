@@ -6,8 +6,12 @@ on:
     branches:
       - main
 
+permissions: {}
+
 jobs:
   test:
+    permissions:
+      contents: read
     name: test (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:

@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `TRF060`: files in a model directory must use relative `transformers` imports
+  (`from ...modeling_utils import X`), not as `from transformers.modeling_utils import X` or
+  `import transformers...`. Tests,
+  `convert_*.py` scripts and files outside a transformers checkout are skipped; models added before the
+  `2026-06-20` cutoff are exempt.
+
 ## [0.1.5] - 2026-08-28
 
 ### Added

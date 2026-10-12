@@ -1041,3 +1041,21 @@ diff = '''
 +    def forward(self, hidden_states, top_k_index, top_k_weights):
          ...
 '''
+
+[rules.TRF060]
+description = "Files in a model directory must import from transformers with relative imports, not `from transformers...`."
+default_enabled = true
+allowlist_models = ["auto"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF060.explanation]
+what_it_does = "Flags `from transformers... import X` and `import transformers...` in every file under `src/transformers/models/` and suggests the relative spelling for the file's location (`from ...modeling_utils import X`, `from .configuration_acme import X`). `convert_*.py` scripts are skipped (they run as standalone scripts, where a relative import cannot resolve)."
+why_bad = "Relative imports are the standard in transformers."
+diff = '''
+-from transformers.modeling_utils import PreTrainedModel
+-from transformers.models.acme.configuration_acme import AcmeConfig
+-from transformers import initialization as init
++from ...modeling_utils import PreTrainedModel
++from .configuration_acme import AcmeConfig
++from ... import initialization as init
+'''

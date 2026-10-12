@@ -372,7 +372,7 @@ def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: l
 
 
 def colored_error_message(file_path: str, line_number: int, message: str) -> str:
-    return f"[bold red]{file_path}[/bold red]:[bold yellow]L{line_number}[/bold yellow]: {message}"
+    return f"[bold red]{file_path}[/bold red]:[bold yellow]{line_number}[/bold yellow]: {message}"
 
 
 def _path_is_within(file_path: Path, search_path: Path) -> bool:

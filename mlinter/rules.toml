@@ -1041,3 +1041,24 @@ diff = '''
 +    def forward(self, hidden_states, top_k_index, top_k_weights):
          ...
 '''
+
+[rules.TRF061]
+description = "ProcessingKwargs subclasses must type modality fields with the shared kwargs classes."
+default_enabled = true
+allowlist_models = []
+# cutoff_date = "2026-06-20"
+
+[rules.TRF061.explanation]
+what_it_does = "Checks that ProcessingKwargs subclasses do not overwrite `text_kwargs`, `images_kwargs`, `videos_kwargs`, or `audio_kwargs`"
+why_bad = "We want to deprecate modality-specific kwargs classes in ProcessingKwargs as their types are only known at runtime."
+diff = '''
+ class AcmeProcessorKwargs(ProcessingKwargs, total=False):
+-    text_kwargs: AcmeTextKwargs
+-    images_kwargs: AcmeImagesKwargs
+-    audio_kwargs: AcmeAudioKwargs
+-    videos_kwargs: AcmeVideosKwargs
++    text_kwargs: TextKwargs
++    images_kwargs: ImagesKwargs
++    audio_kwargs: AudioKwargs
++    videos_kwargs: VideosKwargs
+'''

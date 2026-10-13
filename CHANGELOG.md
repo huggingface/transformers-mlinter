@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Improved
+
+- `TRF057` now covers video processors: a `BaseVideoProcessor` subclass in `video_processing_*.py` (or the
+  `modular_*.py` it is generated from) needs `@auto_docstring` on the class and on its `preprocess` method, as
+  image processors already do.
+
 ## [0.1.5] - 2026-08-28
 
 ### Added

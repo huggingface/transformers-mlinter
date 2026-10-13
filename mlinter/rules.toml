@@ -995,7 +995,7 @@ allowlist_models = ["kosmos2", "timm_backbone", "timm_wrapper", "vitpose_backbon
 cutoff_date = "2026-06-20"
 
 [rules.TRF057.explanation]
-what_it_does = "Checks `@auto_docstring` on public `PreTrainedModel` subclasses (`<Model>PreTrainedModel`, `<Model>Model`, `<Model>For<Task>`, backbones), `PreTrainedConfig` subclasses, `ModelOutput` subclasses, image processors and `ProcessorMixin` subclasses, and on their public methods `forward`, `get_image_features`, `get_video_features`, `get_audio_features`, `get_text_features`, `preprocess` and `__call__`. A `modular_*.py` is checked against the files generated from it."
+what_it_does = "Checks `@auto_docstring` on public `PreTrainedModel` subclasses (`<Model>PreTrainedModel`, `<Model>Model`, `<Model>For<Task>`, backbones), `PreTrainedConfig` subclasses, `ModelOutput` subclasses, image processors, video processors and `ProcessorMixin` subclasses, and on their public methods `forward`, `get_image_features`, `get_video_features`, `get_audio_features`, `get_text_features`, `preprocess` and `__call__`. A `modular_*.py` is checked against the files generated from it."
 why_bad = "Without it a class ships with no intro and no parameter documentation, and a method with no argument documentation, no `Returns` section and no usage example -- all of which then have to be hand-written per model instead of coming from `auto_docstring.py`."
 diff = '''
 +@auto_docstring

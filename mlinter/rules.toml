@@ -1041,3 +1041,27 @@ diff = '''
 +    def forward(self, hidden_states, top_k_index, top_k_weights):
          ...
 '''
+
+[rules.TRF062]
+description = "Inheriting from another class defined in the same modular_*.py file is discouraged."
+default_enabled = true
+allowlist_models = ["esmfold2", "granite_speech5"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF062.explanation]
+what_it_does = "In modular_*.py, flags a class whose base is another class defined earlier in the same file. Bases imported from another model are what modular inheritance is for and are not flagged. The exception are `PreTrainedModel` subclasses which are allowed."
+why_bad = "The modular converter copies a local subclass as-is, so the generated modeling file keeps the inheritance and the class can no longer be read on its own. Modeling files are meant to spell out each class in full, with the reuse expressed only in the modular file through imports from other models."
+diff = '''
+ from ..llama.modeling_llama import LlamaDecoderLayer
+
+
+ class AcmeDecoderLayer(LlamaDecoderLayer):
+     pass
+
+
+-class AcmeSparseDecoderLayer(AcmeDecoderLayer):
++class AcmeSparseDecoderLayer(LlamaDecoderLayer):
+     def __init__(self, config, layer_idx):
+         super().__init__(config, layer_idx)
+         self.mlp = AcmeSparseMoeBlock(config)
+'''

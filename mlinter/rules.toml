@@ -1041,3 +1041,22 @@ diff = '''
 +    def forward(self, hidden_states, top_k_index, top_k_weights):
          ...
 '''
+
+[rules.TRF063]
+description = "_init_weights must use the transformers `initialization` module, not `torch.nn.init`."
+default_enabled = true
+allowlist_models = []
+
+[rules.TRF063.explanation]
+what_it_does = "Flags calls inside `_init_weights` that use a public `torch.nn.init` function like `nn.init.normal_(...)`. Private helpers such as `torch.nn.init._calculate_fan_in_and_fan_out` that only compute values and are allowed."
+why_bad = "Parameters carry an `_is_hf_initialized` flag, and the transformers `init` functions respect it: they skip weights already loaded from a checkpoint. `torch.nn.init` ignores the flag and overwrites them."
+diff = '''
+-from torch.nn import init
++from ... import initialization as init
+
+ def _init_weights(self, module):
+     super()._init_weights(module)
+     if isinstance(module, AcmeLayerScale):
+-        nn.init.constant_(module.lambda1, self.config.layer_scale_init_value)
++        init.constant_(module.lambda1, self.config.layer_scale_init_value)
+'''

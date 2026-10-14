@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `TRF060`: in `modeling_*.py` and `modular_*.py`, flags a sub-model call made with every
+  hidden state switched on (`output_hidden_states=True`, or `kwargs["output_hidden_states"] = True` before a
+  `**kwargs` call) when the same function only reads that call's `.hidden_states[...]` by index, as
+  `get_image_features` does with `vision_feature_layer`. Each forced capture keeps one activation per layer alive;
+  for Aria in vLLM it raised peak activation memory from 5.79 GiB to 14.91 GiB. The fix is
+  `hidden_states_to_capture`, which captures only the selected layers. Iterating, slicing or stacking the whole
+  tuple is exempt, as are `@filter_output_hidden_states` backbones. The helper and the fixes for every existing
+  model land in [huggingface/transformers#49594](https://github.com/huggingface/transformers/pull/49594).
+
 ## [0.1.5] - 2026-08-28
 
 ### Added

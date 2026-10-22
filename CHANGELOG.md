@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `TRF064`: a model-local relative import that runs at module import time must not need backends beyond what the
+  importing file declares (its base requirements, the weakest `@requires` among its `__all__` objects, or an
+  enclosing `is_<backend>_available()` guard). Imports are followed through sibling files; a `modular_*.py` file is
+  checked through the files it generates. Catches a `@requires(backends=("vision",))` processor importing a
+  torchvision image processor, which breaks `from transformers import *` with Pillow but no torch, as in
+  [huggingface/transformers#49748](https://github.com/huggingface/transformers/pull/49748).
+- The lint cache now hashes every sibling file in the model directory, so editing an imported file re-checks its
+  importers.
+
 ## [0.1.5] - 2026-08-28
 
 ### Added

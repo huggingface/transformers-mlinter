@@ -227,7 +227,13 @@ def _is_rule_allowlisted_for_file(rule_id: str, file_path: Path) -> bool:
 
 
 def _find_companion_files(file_path: Path) -> list[Path]:
-    """Return companion config files whose content may affect rule results."""
+    """Return companion files whose content may affect rule results."""
+    # TRF064 follows imports into sibling files and, for a modular file, reads what it generates.
+    siblings = sorted(path for path in file_path.parent.glob("*.py") if path.name != file_path.name)
+    return sorted(set(_find_config_companions(file_path)) | set(siblings))
+
+
+def _find_config_companions(file_path: Path) -> list[Path]:
     file_name = file_path.name
     if not (file_name.startswith("modeling_") or file_name.startswith("modular_")):
         return []

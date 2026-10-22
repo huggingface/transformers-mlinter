@@ -1041,3 +1041,20 @@ diff = '''
 +    def forward(self, hidden_states, top_k_index, top_k_weights):
          ...
 '''
+
+[rules.TRF064]
+description = "Model-local imports must not need backends beyond those the importing module's exported objects declare."
+default_enabled = true
+allowlist_models = []
+
+[rules.TRF064.explanation]
+what_it_does = "For every relative import that runs when a model file is imported, follows the imported model files and collects the backends their unguarded top-level imports need (`import torch` needs torch, `from PIL import Image` needs vision, and so on). It flags the import when one of those backends is not covered by the file's base requirements, the weakest `@requires(backends=...)` among its `__all__` objects, or an enclosing `if is_<backend>_available():` guard. A `modular_*.py` file is checked through the files it generates."
+why_bad = "Transformers' lazy module imports a file as soon as the backends one of its exported objects declares are installed. If that file pulls in a sibling which needs more, `from transformers import *` crashes in that environment: a processor marked `@requires(backends=(\"vision\",))` that imports a torchvision image processor breaks every install that has Pillow but not torch. CI rarely runs that combination, so the crash reaches users."
+diff = '''
+ if is_vision_available():
+-    from .image_processing_acme import AcmeImageProcessorKwargs
++    from .image_processing_pil_acme import AcmeImageProcessorKwargs
+ 
+ @requires(backends=("vision",))
+ class AcmeProcessor(ProcessorMixin):
+'''

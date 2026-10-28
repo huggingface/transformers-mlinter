@@ -29,6 +29,7 @@ from mlinter import trf038 as _trf038_mod  # noqa: F401 - re-exported for existi
 from mlinter import trf042 as _trf042_mod  # noqa: F401 - re-exported for existing rule tests
 from mlinter import trf057 as _trf057_mod  # noqa: F401 - re-exported for existing rule tests
 from mlinter import trf059 as _trf059_mod  # noqa: F401 - re-exported for existing rule tests
+from mlinter import trf061 as _trf061_mod  # noqa: F401 - re-exported for existing rule tests
 
 
 __all__ = [

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import tempfile
 import textwrap
 
 from tests.rule_test_utils import Path, RuleTestCase, mlinter
@@ -323,6 +324,76 @@ class TRF055Test(RuleTestCase):
                 config_class = FooConfig
         """
         self.assertTrue(self._trf055(source, file_name="modeling_foo_bar.py"))
+
+    def _trf055_modular(self, modular: str, generated: str) -> list:
+        """Lint `modular_foo.py` next to the `modeling_foo.py` generated from it."""
+        banner = "#           This file was automatically generated from src/transformers/models/foo/modular_foo.py.\n"
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_dir = Path(tmp_dir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            (model_dir / "modeling_foo.py").write_text(banner + self._src(generated), encoding="utf-8")
+            modular_path = model_dir / "modular_foo.py"
+            modular_path.write_text(self._src(modular), encoding="utf-8")
+            violations = mlinter.analyze_file(modular_path, self._src(modular), enabled_rules={mlinter.TRF055})
+        return [v for v in violations if v.rule_id == mlinter.TRF055]
+
+    def test_modular_reports_generated_problem_on_its_class(self):
+        modular = """
+            from ..bar.modeling_bar import BarVisionEncoder
+
+            class FooVisionEncoder(BarVisionEncoder):
+                pass
+        """
+        generated = """
+            class FooPreTrainedModel(PreTrainedModel):
+                config: FooConfig
+
+            class FooVisionEncoder(FooPreTrainedModel):
+                def __init__(self, config: FooVisionConfig):
+                    super().__init__(config)
+        """
+        found = self._trf055_modular(modular, generated)
+        self.assertEqual(len(found), 1, [v.message for v in found])
+        self.assertEqual(found[0].line_number, self._line(modular, "class FooVisionEncoder"))
+        self.assertIn("generated modeling_foo.py:", found[0].message)
+        self.assertIn("takes `config: FooVisionConfig` but the class inherits `config: FooConfig`", found[0].message)
+
+    def test_modular_skips_classes_it_does_not_define(self):
+        # `FooPreTrainedModel` was copied from another model by the converter: that model's files report it.
+        modular = """
+            class FooModel(BarModel):
+                pass
+        """
+        generated = """
+            class FooPreTrainedModel(PreTrainedModel):
+                config_class = FooConfig
+
+            class FooModel(FooPreTrainedModel):
+                config: FooConfig
+        """
+        self.assertEqual(self._trf055_modular(modular, generated), [])
+
+    def test_modular_suppression_on_class_line(self):
+        modular = """
+            class FooPreTrainedModel(BarPreTrainedModel):  # trf-ignore: TRF055
+                pass
+        """
+        generated = """
+            class FooPreTrainedModel(PreTrainedModel):
+                config_class = FooConfig
+        """
+        self.assertEqual(self._trf055_modular(modular, generated), [])
+
+    def test_skips_union_annotation_written_as_string(self):
+        source = """
+            class FooPreTrainedModel(PreTrainedModel):
+                config: FooConfig
+
+            class FooVisionBackbone(FooPreTrainedModel):
+                def __init__(self, config: "FooConfig | FooVisionConfig"):
+                    super().__init__(config)
+        """
+        self.assertEqual(self._trf055(source), [])
 
     # --- suppression -----------------------------------------------------------------------------
 

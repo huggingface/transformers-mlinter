@@ -53,9 +53,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Improved
 
+- `TRF055` now enforces the whole `config` contract on `PreTrainedModel` classes: `config_class` is never
+  written by hand, every `<Model>PreTrainedModel` declares a `config: <Model>Config` annotation, and an
+  `__init__` taking `config` annotates it with the config the class declares or inherits. A mismatch means the
+  model is built from one config type but advertises another, as with `SamVisionEncoder`, which takes a
+  `SamVisionConfig` but reports `SamConfig`. A `modular_*.py` file is checked through the `modeling_*.py` files it
+  generates and the problem is reported on its own class. Closes
+  [#88](https://github.com/huggingface/transformers-mlinter/issues/88).
 - `TRF057` now covers video processors: a `BaseVideoProcessor` subclass in `video_processing_*.py` (or the
   `modular_*.py` it is generated from) needs `@auto_docstring` on the class and on its `preprocess` method, as
   image processors already do.
+
+### Removed
+
+- Removed `TRF001`, which checked that `config_class` on `<Model>PreTrainedModel` was named `<Model>Config`.
+  `config_class` is no longer written by hand, and `TRF055` now flags it outright.
 
 ## [0.1.5] - 2026-08-28
 

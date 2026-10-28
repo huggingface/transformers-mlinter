@@ -747,7 +747,7 @@ class _LazyConfigMapping(OrderedDict[str, str]):
 
             yielded = list(mlinter.iter_modeling_files({generated, source}))
 
-            self.assertEqual(yielded, [generated, source])
+            self.assertEqual(yielded, [source])
 
     def test_iter_modeling_files_skips_generated_when_walking_models_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -826,7 +826,7 @@ class _LazyConfigMapping(OrderedDict[str, str]):
             )
             (repo / "modular_foo.py").write_text("class FooModel: ...\n", encoding="utf-8")
             found = {path.name for path in mlinter.iter_modeling_files(search_paths=[repo])}
-        self.assertEqual(found, {"modeling_foo.py", "modular_foo.py"})
+        self.assertEqual(found, {"modular_foo.py"})
 
     def test_search_paths_accept_an_explicit_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -1,18 +1,8 @@
 version = 1
 
 [rules.TRF001]
-description = "config_class on <Model>PreTrainedModel should match <Model>Config naming."
 deprecated = true
-allowlist_models = ["qwen3_omni_moe"]
-
-[rules.TRF001.explanation]
-what_it_does = "Checks that <Model>PreTrainedModel's config_class is named <Model>Config."
-why_bad = "A mismatch can break loading, auto classes and developer expectations."
-diff = '''
- class AcmePreTrainedModel(PreTrainedModel):
--    config_class = WileConfig
-+    config_class = AcmeConfig
-'''
+description = "Removed in 0.1.6: checked that `config_class` on `<Model>PreTrainedModel` was named `<Model>Config`. `config_class` is no longer written by hand; `TRF055` now requires a `config: <Model>Config` annotation instead and flags any `config_class`."
 
 [rules.TRF002]
 description = "base_model_prefix on a PreTrainedModel, when set, should be a non-empty canonical string."
@@ -961,7 +951,7 @@ default_enabled = true
 allowlist_models = []
 
 [rules.TRF055.explanation]
-what_it_does = "In modeling_*.py, flags on PreTrainedModel classes: any `config_class`; `config = SomeConfig` as a class attribute; a `<Model>PreTrainedModel` with no `config: SomeConfig` annotation; and an `__init__` whose `config` argument is unannotated or names a different config than the class declares or inherits. Modular files are not checked, since they are generated into modeling files."
+what_it_does = "In modeling_*.py, flags on PreTrainedModel classes: any `config_class`; `config = SomeConfig` as a class attribute; a `<Model>PreTrainedModel` with no `config: SomeConfig` annotation; and an `__init__` whose `config` argument is unannotated or names a different config than the class declares or inherits. A `modular_*.py` file is checked through the `modeling_*.py` files generated from it, since the class hierarchy is only complete there; each problem is reported on the class in the modular file, and classes the converter copied from another model are left to that model's files."
 why_bad = "`PreTrainedModel.__init_subclass__` derives `config_class` from a `config` **annotation**, via `inspect.get_annotations(cls)`. An assignment creates a stray class attribute that call does not report, so the subclass silently keeps the parent's `config_class`; a hand-written `config_class` is redundant and can drift from the annotation. A bare annotation has no runtime value, creates no attribute, and is picked up correctly. The `__init__` annotation must agree with the class's `config`, otherwise the model is built from one config type but advertises another."
 diff = '''
  class Gemma4VisionModel(Gemma4PreTrainedModel):

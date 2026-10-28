@@ -18,7 +18,15 @@ Every `<Model>PreTrainedModel` must declare a valid `config` annotation that can
 import ast
 from pathlib import Path
 
-from ._helpers import Violation, _has_rule_suppression, _simple_name, full_name, iter_pretrained_classes
+from ._helpers import (
+    GENERATED_FILE_MARKER,
+    Violation,
+    _has_rule_suppression,
+    _simple_name,
+    full_name,
+    iter_pretrained_classes,
+    read_file_head,
+)
 
 
 RULE_ID = ""  # Set by discovery
@@ -38,7 +46,10 @@ def _annotation_name(annotation: ast.expr | None) -> str | None:
     if isinstance(annotation, (ast.Name, ast.Attribute)):
         return _simple_name(full_name(annotation))
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
-        return annotation.value.rsplit(".", 1)[-1]
+        try:
+            return _annotation_name(ast.parse(annotation.value, mode="eval").body)
+        except SyntaxError:
+            return None
     return None
 
 
@@ -76,19 +87,68 @@ def _init_config_arg(node: ast.ClassDef) -> tuple[ast.FunctionDef, ast.arg] | No
     return None
 
 
+def _generated_modeling_files(modular_path: Path) -> list[Path]:
+    """The `modeling_*.py` files the converter produced from `modular_path`, identified by their banner."""
+    generated = []
+    for sibling in sorted(modular_path.parent.glob("modeling_*.py")):
+        head = read_file_head(sibling)
+        if head is not None and GENERATED_FILE_MARKER in head and modular_path.name in head:
+            generated.append(sibling)
+    return generated
+
+
+def _check_modular(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
+    """Check what a modular file generates, reporting on the class in the modular file.
+
+    The class hierarchy and the `config` annotations are only complete in the generated modeling file, since a
+    modular class often inherits them from another model. A generated class the modular file does not define was
+    copied from another model, whose own files report it.
+    """
+    modular_classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    violations: list[Violation] = []
+    for generated in _generated_modeling_files(file_path):
+        try:
+            generated_source = generated.read_text(encoding="utf-8")
+            generated_tree = ast.parse(generated_source)
+        except (OSError, SyntaxError):
+            continue
+        for class_name, line, message in _problems(generated_tree, generated_source.splitlines()):
+            modular_class = modular_classes.get(class_name)
+            if modular_class is None or _has_rule_suppression(source_lines, RULE_ID, modular_class.lineno):
+                continue
+            violations.append(
+                Violation(
+                    file_path=file_path,
+                    line_number=modular_class.lineno,
+                    message=f"{RULE_ID}: generated {generated.name}:{line}: {message}",
+                )
+            )
+    return violations
+
+
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
-    # Check generated modeling files only: modular files are hard to check due to cross-model inheritance
+    if file_path.name.startswith("modular_"):
+        return _check_modular(tree, file_path, source_lines)
     if not file_path.name.startswith("modeling_"):
         return []
+    return [
+        Violation(file_path=file_path, line_number=line, message=f"{RULE_ID}: {message}")
+        for _, line, message in _problems(tree, source_lines)
+    ]
 
+
+def _problems(tree: ast.Module, source_lines: list[str]) -> list[tuple[str, int, str]]:
+    """`(class name, line, message)` for every problem in a modeling file, suppressions already applied."""
     classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
-    violations: list[Violation] = []
+    problems: list[tuple[str, int, str]] = []
+    class_name = ""
 
     def flag(line: int, message: str) -> None:
         if not _has_rule_suppression(source_lines, RULE_ID, line):
-            violations.append(Violation(file_path=file_path, line_number=line, message=f"{RULE_ID}: {message}"))
+            problems.append((class_name, line, message))
 
     for node in iter_pretrained_classes(tree, source_lines, RULE_ID):
+        class_name = node.name
         has_config_annotation = False
 
         # 1. Class body: `config_class` is forbidden, `config` must be a bare annotation.
@@ -149,4 +209,4 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                 f"Make them match; add or update `config: {init_config}` in the class body if that is intended.",
             )
 
-    return violations
+    return problems

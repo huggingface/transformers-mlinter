@@ -236,9 +236,9 @@ class TRF055Test(RuleTestCase):
         """
         self.assertEqual(self._trf055(source), [])
 
-    # --- __init__ must annotate and agree with the effective config ------------------------------
+    # --- an annotated __init__ must agree with the effective config --------------------------------
 
-    def test_flags_unannotated_init_config(self):
+    def test_accepts_unannotated_init_config(self):
         source = """
             class FooPreTrainedModel(PreTrainedModel):
                 config: FooConfig
@@ -247,7 +247,7 @@ class TRF055Test(RuleTestCase):
                 def __init__(self, config):
                     super().__init__(config)
         """
-        self._assert_single(source, "def __init__(self, config)", "must annotate", "config: FooConfig")
+        self.assertEqual(self._trf055(source), [])
 
     def test_flags_init_mismatching_inherited_config(self):
         source = """
@@ -434,18 +434,6 @@ class TRF055Test(RuleTestCase):
                     self,
                     config: BarConfig,  # trf-ignore: TRF055
                 ):
-                    super().__init__(config)
-        """
-        self.assertEqual(self._trf055(source), [])
-
-    def test_suppression_on_unannotated_init(self):
-        source = """
-            class FooPreTrainedModel(PreTrainedModel):
-                config: FooConfig
-
-            class FooModel(FooPreTrainedModel):
-                # trf-ignore: TRF055
-                def __init__(self, config):
                     super().__init__(config)
         """
         self.assertEqual(self._trf055(source), [])

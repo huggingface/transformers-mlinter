@@ -34,6 +34,7 @@ CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no
 
 MODEL_KIND = "model"
 IMAGE_PROCESSOR_KIND = "image processor"
+VIDEO_PROCESSOR_KIND = "video processor"
 PROCESSOR_KIND = "processor"
 CONFIG_KIND = "config"
 OUTPUT_KIND = "model output"
@@ -50,6 +51,7 @@ METHODS_BY_KIND = {
         }
     ),
     IMAGE_PROCESSOR_KIND: frozenset({"preprocess"}),
+    VIDEO_PROCESSOR_KIND: frozenset({"preprocess"}),
     PROCESSOR_KIND: frozenset({"__call__"}),
     CONFIG_KIND: frozenset(),
     OUTPUT_KIND: frozenset(),
@@ -62,6 +64,7 @@ KIND_BY_BASE = {
     "BaseImageProcessor": IMAGE_PROCESSOR_KIND,
     "PilBackend": IMAGE_PROCESSOR_KIND,
     "TorchvisionBackend": IMAGE_PROCESSOR_KIND,
+    "BaseVideoProcessor": VIDEO_PROCESSOR_KIND,
     "ProcessorMixin": PROCESSOR_KIND,
     "PreTrainedConfig": CONFIG_KIND,
     "PretrainedConfig": CONFIG_KIND,
@@ -75,13 +78,21 @@ KIND_BY_BASE_SUFFIX = {"Config": CONFIG_KIND, "Output": OUTPUT_KIND}
 KIND_BY_FILE_PREFIX = {
     "processing_": PROCESSOR_KIND,
     "image_processing_": IMAGE_PROCESSOR_KIND,
+    "video_processing_": VIDEO_PROCESSOR_KIND,
 }
 
 # Model class names that need the decorator on the class itself, i.e. the ones that are part of the public
 # API. Config, output and processor classes need no such filter as they are all public.
 MODEL_CLASS_NAME_PATTERN = re.compile(r"(?:PreTrainedModel|Model|Backbone|WithProjection)$|For[A-Z]\w*$")
 
-CHECKED_FILE_PREFIXES = ("modeling_", "modular_", "image_processing_", "processing_", "configuration_")
+CHECKED_FILE_PREFIXES = (
+    "modeling_",
+    "modular_",
+    "image_processing_",
+    "video_processing_",
+    "processing_",
+    "configuration_",
+)
 DECORATOR = "auto_docstring"
 # Decorators that have to stay below @auto_docstring, in the order they appear in a stack.
 INNER_DECORATORS = ("strict", "dataclass")

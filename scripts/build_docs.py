@@ -34,16 +34,9 @@ import argparse
 import re
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 from typing import cast
-
-
-# Same fallback as mlinter/mlinter.py: tomllib is stdlib only from 3.11, and this project supports 3.10,
-# where the `tomli` dependency stands in for it.
-try:
-    import tomllib  # Python >= 3.11
-except ModuleNotFoundError:
-    import tomli as tomllib  # Python 3.10 fallback
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

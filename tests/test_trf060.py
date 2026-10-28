@@ -13,163 +13,85 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import RuleTestCase, mlinter
+from tests.rule_test_utils import Path, RuleTestCase, _helpers_mod, date, mlinter, patch
 
 
 class TRF060Test(RuleTestCase):
-    # --- TRF060: don't capture every hidden state to read only some of them ---
+    # --- TRF060: model files must import from transformers with relative imports ---
 
-    def test_trf060_flags_forced_kwargs_with_single_index(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, return_dict=True, **kwargs)
-        selected_image_feature = image_outputs.hidden_states[vision_feature_layer]
-        return self.multi_modal_projector(selected_image_feature)
-"""
-        violations = self._run(mlinter.TRF060, source)
+    def _trf060(self, source: str, file_path: str = "src/transformers/models/foo/modeling_foo.py", contributed=None):
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=contributed):
+            violations = mlinter.analyze_file(Path(file_path), source, enabled_rules={mlinter.TRF060})
+        return [v for v in violations if v.rule_id == mlinter.TRF060]
+
+    def test_trf060_flags_absolute_import_of_shared_module(self):
+        violations = self._trf060("from transformers.modeling_utils import PreTrainedModel\n")
         self.assertEqual(len(violations), 1)
-        self.assertEqual(violations[0].line_number, 4)
-        self.assertIn("get_image_features", violations[0].message)
-        self.assertIn("hidden_states_to_capture", violations[0].message)
+        self.assertEqual(violations[0].line_number, 1)
+        self.assertIn("`from ...modeling_utils import PreTrainedModel`", violations[0].message)
 
-    def test_trf060_flags_comprehension_over_feature_layers(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, **kwargs):
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, **kwargs)
-        hs_pool = [image_outputs.hidden_states[layer_idx] for layer_idx in self.config.vision_feature_layer]
-        return torch.cat(hs_pool, dim=-1)
-"""
-        self.assertEqual(len(self._run(mlinter.TRF060, source)), 1)
-
-    def test_trf060_flags_keyword_flag_and_alias(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_img_features(self, img_embeds, attention_mask):
-        img_processor_output = self.img_processor(
-            img_embeds, patch_attention_mask=attention_mask, output_hidden_states=True
-        )
-        hidden_states = img_processor_output.hidden_states
-        return hidden_states[self.layer_idx]
-"""
-        violations = self._run(mlinter.TRF060, source)
+    def test_trf060_flags_top_level_package_import(self):
+        violations = self._trf060("from transformers import initialization as init\n")
         self.assertEqual(len(violations), 1)
-        self.assertEqual(violations[0].line_number, 5)
+        self.assertIn("`from ... import initialization as init`", violations[0].message)
 
-    def test_trf060_flags_chained_read_on_the_call(self):
+    def test_trf060_suggests_sibling_module_for_own_model(self):
+        violations = self._trf060("from transformers.models.foo.configuration_foo import FooConfig\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`from .configuration_foo import FooConfig`", violations[0].message)
+
+    def test_trf060_flags_modular_import_from_another_model(self):
+        source = "from transformers.models.llama.modeling_llama import LlamaAttention, LlamaMLP\n"
+        violations = self._trf060(source, file_path="src/transformers/models/foo/modular_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`from ..llama.modeling_llama import LlamaAttention, LlamaMLP`", violations[0].message)
+
+    def test_trf060_elides_long_import_lists(self):
+        source = "from transformers.models.llama.modeling_llama import A, B, C, D\n"
+        violations = self._trf060(source, file_path="src/transformers/models/foo/modular_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`from ..llama.modeling_llama import ...`", violations[0].message)
+
+    def test_trf060_flags_plain_import_statement(self):
+        violations = self._trf060("import transformers.utils.logging as hf_logging\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`from ...utils import logging as hf_logging`", violations[0].message)
+
+    def test_trf060_flags_import_inside_function(self):
         source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values):
-        return self.vision_model(pixel_values, output_hidden_states=True).hidden_states[-2]
+def foo():
+    from transformers.utils import logging
 """
-        self.assertEqual(len(self._run(mlinter.TRF060, source)), 1)
+        violations = self._trf060(source)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line_number, 3)
 
-    def test_trf060_flags_modular_file_with_imported_base(self):
-        # The rule reads only the function's own body, so an imported base class changes nothing.
+    def test_trf060_allows_relative_and_third_party_imports(self):
         source = """
-from ..llava.modeling_llava import LlavaModel
+import torch
+from torch import nn
+from transformers_extra import thing
 
-
-class FooModel(LlavaModel):
-    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, **kwargs)
-        return image_outputs.hidden_states[vision_feature_layer]
+from ...modeling_utils import PreTrainedModel
+from ..llama.modeling_llama import LlamaAttention
+from .configuration_foo import FooConfig
 """
-        self.assertEqual(len(self._run(mlinter.TRF060, source, file_name="modular_foo.py")), 1)
+        self.assertEqual(self._trf060(source), [])
 
-    def test_trf060_allows_hidden_states_to_capture(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
-        vision_feature_layer, kwargs["output_hidden_states"] = hidden_states_to_capture(
-            vision_feature_layer, self.config.vision_config, kwargs.get("output_hidden_states")
-        )
-        image_outputs = self.vision_tower(pixel_values, return_dict=True, **kwargs)
-        return image_outputs.hidden_states[vision_feature_layer]
-"""
-        self.assertEqual(self._run(mlinter.TRF060, source), [])
+    def test_trf060_ignores_files_outside_a_transformers_checkout(self):
+        # In a standalone model repo `transformers` is a dependency: absolute is the only valid form.
+        source = "from transformers.modeling_utils import PreTrainedModel\n"
+        self.assertEqual(self._trf060(source, file_path="my_model/modeling_foo.py"), [])
 
-    def test_trf060_allows_stacking_the_whole_tuple(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, input_values):
-        outputs = self.semantic_model(input_values, output_hidden_states=True)
-        hidden_states = outputs.hidden_states
-        stacked = torch.stack([h for h in hidden_states], dim=1)
-        return stacked.mean(dim=1), hidden_states[-1]
-"""
-        self.assertEqual(self._run(mlinter.TRF060, source), [])
+    def test_trf060_ignores_conversion_scripts(self):
+        source = "from transformers import FooConfig, FooModel\n"
+        path = "src/transformers/models/foo/convert_foo_to_hf.py"
+        self.assertEqual(self._trf060(source, file_path=path), [])
 
-    def test_trf060_allows_slicing_or_passing_the_tuple_on(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, pixel_values):
-        outputs = self.encoder(pixel_values, output_hidden_states=True)
-        return self.decoder(outputs.hidden_states)
+    def test_trf060_cutoff_exempts_old_model(self):
+        source = "from transformers.modeling_utils import PreTrainedModel\n"
+        self.assertEqual(self._trf060(source, contributed=date(2020, 1, 1)), [])
 
-    def other(self, pixel_values):
-        outputs = self.encoder(pixel_values, output_hidden_states=True)
-        return [h[0] for h in outputs.hidden_states[1:]]
-"""
-        self.assertEqual(self._run(mlinter.TRF060, source), [])
-
-    def test_trf060_allows_filter_output_hidden_states_backbones(self):
-        source = """
-class FooBackbone(FooPreTrainedModel, BackboneMixin):
-    @can_return_tuple
-    @filter_output_hidden_states
-    def forward(self, pixel_values):
-        outputs = self.foo(pixel_values, output_hidden_states=True, return_dict=True)
-        hidden_states = outputs.hidden_states
-        feature_maps = ()
-        for idx, stage in enumerate(self.stage_names):
-            if stage in self.out_features:
-                feature_maps += (hidden_states[idx],)
-        return BackboneOutput(feature_maps=feature_maps)
-"""
-        self.assertEqual(self._run(mlinter.TRF060, source), [])
-
-    def test_trf060_ignores_unrelated_hidden_states_local(self):
-        # `hidden_states` is assigned before the forced call and never aliases its output tuple.
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, pixel_values, **kwargs):
-        hidden_states = self.embeddings(pixel_values)
-        first = hidden_states[0]
-        kwargs["output_hidden_states"] = True
-        outputs = self.encoder(first, **kwargs)
-        return self.head(outputs.hidden_states)
-"""
-        self.assertEqual(self._run(mlinter.TRF060, source), [])
-
-    def test_trf060_ignores_kwargs_forced_after_the_call(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, pixel_values, **kwargs):
-        outputs = self.encoder(pixel_values, **kwargs)
-        kwargs["output_hidden_states"] = True
-        return outputs.hidden_states[-1]
-"""
-        self.assertEqual(self._run(mlinter.TRF060, source), [])
-
-    def test_trf060_ignores_configuration_files(self):
-        source = """
-def helper(model, x):
-    return model(x, output_hidden_states=True).hidden_states[-2]
-"""
-        self.assertEqual(self._run(mlinter.TRF060, source, file_name="configuration_foo.py"), [])
-
-    def test_trf060_suppression(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, **kwargs):
-        # trf-ignore: TRF060
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, **kwargs)
-        return image_outputs.hidden_states[-2]
-"""
-        self.assertEqual(self._run(mlinter.TRF060, source), [])
+    def test_trf060_suppression_comment(self):
+        source = "from transformers.modeling_utils import PreTrainedModel  # trf-ignore: TRF060\n"
+        self.assertEqual(self._trf060(source), [])

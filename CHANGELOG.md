@@ -9,7 +9,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- `TRF060`: in `modeling_*.py` and `modular_*.py`, flags a sub-model call made with every
+- `TRF060`: files in a model directory must import from transformers with relative imports
+  (`from ...modeling_utils import X`), not `from transformers.modeling_utils import X` or
+  `import transformers...`. Tests, `convert_*.py` scripts and files outside a transformers checkout are skipped;
+  models added before the `2026-06-20` cutoff are exempt.
+- `TRF061`: flags a class in a `modular_*.py` file that subclasses another class defined in the same file. The
+  modular converter writes out bases imported from another model in full but keeps a same-file base as it is, so
+  the generated modeling file inherits from a sibling class and can no longer be read one class at a time.
+  `<Model>PreTrainedModel` subclasses and backward-compatibility aliases are exempt; models added before
+  2026-06-20 are exempt.
+- `TRF062`: `_init_weights` must initialize tensors with the transformers `initialization` module
+  (`from ... import initialization as init`), not `torch.nn.init`. The transformers functions skip a tensor
+  already loaded from a checkpoint; `torch.nn.init` is only guarded by a patch applied during
+  `initialize_weights`, which a function imported by name escapes. Helpers that only compute a value, such as
+  `calculate_gain`, are not flagged. Existing models were migrated in
+  [huggingface/transformers#49573](https://github.com/huggingface/transformers/pull/49573).
+- `TRF063`: in `modeling_*.py` and `modular_*.py`, flags a sub-model call made with every
   hidden state switched on (`output_hidden_states=True`, or `kwargs["output_hidden_states"] = True` before a
   `**kwargs` call) when the same function only reads that call's `.hidden_states[...]` by index, as
   `get_image_features` does with `vision_feature_layer`. Each forced capture keeps one activation per layer alive;
@@ -17,6 +32,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `hidden_states_to_capture`, which captures only the selected layers. Iterating, slicing or stacking the whole
   tuple is exempt, as are `@filter_output_hidden_states` backbones. The helper and the fixes for every existing
   model land in [huggingface/transformers#49594](https://github.com/huggingface/transformers/pull/49594).
+
+### Changed
+
+- Python 3.11 is now the minimum supported version. The `tomli` dependency is gone: `tomllib` from the
+  standard library is used directly.
+- Console output prints a violation's location as `path:42:` instead of `path:L42:`, the `file:line` form
+  editors and terminals turn into a link that jumps to the line. `--output-json` and `--github-annotations`
+  are unchanged.
+
+### Improved
+
+- `TRF057` now covers video processors: a `BaseVideoProcessor` subclass in `video_processing_*.py` (or the
+  `modular_*.py` it is generated from) needs `@auto_docstring` on the class and on its `preprocess` method, as
+  image processors already do.
 
 ## [0.1.5] - 2026-08-28
 

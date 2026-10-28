@@ -995,7 +995,7 @@ allowlist_models = ["kosmos2", "timm_backbone", "timm_wrapper", "vitpose_backbon
 cutoff_date = "2026-06-20"
 
 [rules.TRF057.explanation]
-what_it_does = "Checks `@auto_docstring` on public `PreTrainedModel` subclasses (`<Model>PreTrainedModel`, `<Model>Model`, `<Model>For<Task>`, backbones), `PreTrainedConfig` subclasses, `ModelOutput` subclasses, image processors and `ProcessorMixin` subclasses, and on their public methods `forward`, `get_image_features`, `get_video_features`, `get_audio_features`, `get_text_features`, `preprocess` and `__call__`. A `modular_*.py` is checked against the files generated from it."
+what_it_does = "Checks `@auto_docstring` on public `PreTrainedModel` subclasses (`<Model>PreTrainedModel`, `<Model>Model`, `<Model>For<Task>`, backbones), `PreTrainedConfig` subclasses, `ModelOutput` subclasses, image processors, video processors and `ProcessorMixin` subclasses, and on their public methods `forward`, `get_image_features`, `get_video_features`, `get_audio_features`, `get_text_features`, `preprocess` and `__call__`. A `modular_*.py` is checked against the files generated from it."
 why_bad = "Without it a class ships with no intro and no parameter documentation, and a method with no argument documentation, no `Returns` section and no usage example -- all of which then have to be hand-written per model instead of coming from `auto_docstring.py`."
 diff = '''
 +@auto_docstring
@@ -1043,11 +1043,74 @@ diff = '''
 '''
 
 [rules.TRF060]
+description = "Files in a model directory must import from transformers with relative imports, not `from transformers...`."
+default_enabled = true
+allowlist_models = ["auto"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF060.explanation]
+what_it_does = "Flags `from transformers... import X` and `import transformers...` in every file under `src/transformers/models/` and suggests the relative spelling for the file's location (`from ...modeling_utils import X`, `from .configuration_acme import X`). `convert_*.py` scripts are skipped (they run as standalone scripts, where a relative import cannot resolve)."
+why_bad = "Relative imports are the convention across `src/transformers`. An absolute `from transformers import X` inside the package goes through the lazy top-level `transformers/__init__.py`, which can raise a circular import while the package is still initializing, and in a checkout with several installs it can resolve to a different copy of transformers than the one the file lives in."
+diff = '''
+-from transformers.modeling_utils import PreTrainedModel
+-from transformers.models.acme.configuration_acme import AcmeConfig
+-from transformers import initialization as init
++from ...modeling_utils import PreTrainedModel
++from .configuration_acme import AcmeConfig
++from ... import initialization as init
+'''
+
+[rules.TRF061]
+description = "A class in a modular_*.py file must not subclass another class defined in the same file: the generated modeling file keeps that inheritance."
+default_enabled = true
+allowlist_models = ["esmfold2", "granite_speech5"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF061.explanation]
+what_it_does = "In modular_*.py, flags a class whose base is another class defined earlier in the same file. Bases imported from another model are what modular inheritance is for and are not flagged. `<Model>PreTrainedModel` and its subclasses are exempt, since every model class is meant to build on them, and so is a backward-compatibility alias whose body only calls `super().__init__()`, optionally after a deprecation warning."
+why_bad = "The modular converter writes out a base imported from another model in full, but leaves a base defined in the same modular file as it is. The generated modeling file then keeps the inheritance, for example `class ParakeetTDTJointNetwork(ParakeetRNNTJointNetwork)` with a seven-line body, so a reader has to reassemble the class from its parent. Modeling files are meant to read one class at a time, with reuse expressed only in the modular file through imports from other models."
+diff = '''
+ from ..llama.modeling_llama import LlamaDecoderLayer
+
+
+ class AcmeDecoderLayer(LlamaDecoderLayer):
+     pass
+
+
+-class AcmeSparseDecoderLayer(AcmeDecoderLayer):
++class AcmeSparseDecoderLayer(LlamaDecoderLayer):
+     def __init__(self, config, layer_idx):
+         super().__init__(config, layer_idx)
+         self.mlp = AcmeSparseMoeBlock(config)
+'''
+
+[rules.TRF062]
+description = "`_init_weights` must initialize tensors with the transformers `initialization` module, not `torch.nn.init`."
+default_enabled = true
+allowlist_models = []
+
+[rules.TRF062.explanation]
+what_it_does = "Flags calls inside `_init_weights` to an in-place `torch.nn.init` initializer such as `nn.init.normal_(...)`, however it was imported (`torch.nn.init`, `from torch.nn import init`, `from torch.nn.init import normal_`). Helpers that only compute a value, such as `calculate_gain` or `_calculate_fan_in_and_fan_out`, are not flagged."
+why_bad = "The transformers `init` functions skip a tensor whose `_is_hf_initialized` flag is set, so weights already loaded from a checkpoint are never overwritten. `torch.nn.init` has no such check. `from_pretrained` only covers for it by patching the `torch.nn.init` module while `initialize_weights` runs, which misses a function imported by name: `from torch.nn.init import normal_` keeps the unpatched function, and the loaded weight is silently replaced by a random one. The transformers functions hold the guarantee themselves instead of relying on that patch."
+diff = '''
+ from torch import nn
++
++from ... import initialization as init
+
+
+ def _init_weights(self, module):
+     super()._init_weights(module)
+     if isinstance(module, AcmeLayerScale):
+-        nn.init.constant_(module.lambda1, self.config.layer_scale_init_value)
++        init.constant_(module.lambda1, self.config.layer_scale_init_value)
+'''
+
+[rules.TRF063]
 description = "A sub-model call must not switch on every hidden state when the caller only reads some of them by index."
 default_enabled = true
 allowlist_models = []
 
-[rules.TRF060.explanation]
+[rules.TRF063.explanation]
 what_it_does = "In modeling_*.py and modular_*.py, flags a call made with every hidden state switched on -- `output_hidden_states=True` passed to it, or `kwargs[\"output_hidden_states\"] = True` before a call that unpacks `**kwargs` -- when the same function then only reads that call's `.hidden_states[...]` by index: a single layer, a config value such as `vision_feature_layer`, or a comprehension over feature layers. Code that consumes the whole tuple (iterates it, slices it, or passes it to `torch.stack` or a weighted sum) is exempt, as are backbones decorated with `@filter_output_hidden_states`."
 why_bad = "`output_hidden_states=True` keeps one `(batch, seq, hidden)` tensor per layer alive until the call returns, even when only one or two of them are projected, so peak activation memory grows with depth times image tokens. For Aria in vLLM it raised peak activation memory from 5.79 GiB to 14.91 GiB, cost about half the KV cache and cut image throughput by roughly 30%. `hidden_states_to_capture` captures only the selected layers and returns indices that pick the same features."
 diff = '''

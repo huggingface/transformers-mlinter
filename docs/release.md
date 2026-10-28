@@ -22,7 +22,7 @@ push, followed by a post-release bump that puts `main` on the next plain version
 - A PyPI trusted publisher configured for this GitHub repository and the release workflow
 - A GitHub environment named `pypi-release`, ideally protected with required reviewers
 - A clean checkout on `main`
-- Python 3.10+ with the project dev dependencies installed
+- Python 3.11+ with the project dev dependencies installed
 - Packaging tools installed locally:
 
 ```bash

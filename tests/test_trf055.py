@@ -570,6 +570,21 @@ class TRF055Test(RuleTestCase):
         source = self.INHERITS_COMPOSITE.format(call="FooTextModel(config.text_config)")
         self.assertEqual(self._trf055_in_model_dir(source, configuration=configuration), [])
 
+    def test_reads_sub_config_class_from_sub_config_spec(self):
+        configuration = """
+            class FooConfig(PreTrainedConfig):
+                sub_configs_defaults = {
+                    "text_config": SubConfigSpec(config_class=FooTextConfig, model_type="foo_text"),
+                    "vision_config": SubConfigSpec(AutoConfig, model_type="clip_vision_model"),
+                }
+        """
+        source = self.INHERITS_COMPOSITE.format(call="FooTextModel(config.text_config)")
+        found = self._trf055_in_model_dir(source, configuration=configuration)
+        self.assertEqual(len(found), 1, [v.message for v in found])
+        self.assertIn("Declare `config: FooTextConfig`", found[0].message)
+        vision = self.INHERITS_COMPOSITE.format(call="FooTextModel(config.vision_config)")
+        self.assertEqual(self._trf055_in_model_dir(vision, configuration=configuration), [])
+
     def test_without_sub_config_table_flags_only_the_composite(self):
         configuration = """
             class FooConfig(PreTrainedConfig):

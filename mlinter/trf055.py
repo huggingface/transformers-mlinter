@@ -113,6 +113,13 @@ def _sub_configs(model_dir: Path) -> dict[str, dict[str, str]]:
                 table = tables.setdefault(node.name, {})
                 for key, value in zip(item.value.keys, item.value.values):
                     if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        # `SubConfigSpec(config_class=AcmeTextConfig, ...)` names the class in its first argument.
+                        if isinstance(value, ast.Call) and _simple_name(full_name(value.func)) == "SubConfigSpec":
+                            value = (
+                                value.args[0]
+                                if value.args
+                                else next((k.value for k in value.keywords if k.arg == "config_class"), None)
+                            )
                         sub_config = _annotation_name(value)
                         if sub_config is not None:
                             table[key.value] = sub_config

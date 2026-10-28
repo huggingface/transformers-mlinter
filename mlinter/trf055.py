@@ -128,12 +128,11 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         init_config = _annotation_name(arg.annotation)
 
         if arg.annotation is None:
-            pass
-            # flag(
-            #     init.lineno,
-            #     f"`{node.name}.__init__` must annotate its config argument: `config: {effective or '<Model>Config'}`, "
-            #     f"matching the config attribute it inherits or overrides.",
-            # )
+            flag(
+                init.lineno,
+                f"`{node.name}.__init__` must annotate its config argument: `config: {effective or '<Model>Config'}`, "
+                f"matching the config attribute it inherits or overrides.",
+            )
         elif init_config is None:
             continue  # exotic annotation (Optional[...], union, ...): not our business
         elif effective is None:

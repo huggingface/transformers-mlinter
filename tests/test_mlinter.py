@@ -32,17 +32,17 @@ from tests.rule_test_utils import LICENSE_HEADER
 
 
 def _write_custom_rules_toml(
-    tmp_dir: Path, *, trf001_description: str | None = None, trf001_default_enabled: bool | None = None
+    tmp_dir: Path, *, trf002_description: str | None = None, trf002_default_enabled: bool | None = None
 ) -> Path:
     text = mlinter.DEFAULT_RULE_SPECS_PATH.read_text(encoding="utf-8")
-    if trf001_description is not None:
+    if trf002_description is not None:
         text = text.replace(
-            'description = "config_class on <Model>PreTrainedModel should match <Model>Config naming."',
-            f'description = "{trf001_description}"',
+            'description = "base_model_prefix on a PreTrainedModel, when set, should be a non-empty canonical string."',
+            f'description = "{trf002_description}"',
             1,
         )
-    if trf001_default_enabled is not None:
-        replacement = "true" if trf001_default_enabled else "false"
+    if trf002_default_enabled is not None:
+        replacement = "true" if trf002_default_enabled else "false"
         text = text.replace("default_enabled = true", f"default_enabled = {replacement}", 1)
 
     custom_rules_path = tmp_dir / "custom_rules.toml"
@@ -96,7 +96,6 @@ class CheckModelingStructureTest(unittest.TestCase):
         self.assertIs(public_api.inherits_pretrained_model, _helpers_mod._inherits_pretrained_model)
         self.assertIs(public_api.model_dir_name, _helpers_mod._model_dir_name)
         self.assertIs(public_api.is_rule_allowlisted_for_file, mlinter._is_rule_allowlisted_for_file)
-        self.assertEqual(public_api.TRF001, "TRF001")
         self.assertEqual(public_api.TRF015, "TRF015")
         self.assertEqual(public_api.TRF016, "TRF016")
         self.assertEqual(public_api.TRF017, "TRF017")
@@ -136,7 +135,7 @@ class CheckModelingStructureTest(unittest.TestCase):
         self.assertEqual(public_api.TRF051, "TRF051")
         self.assertEqual(public_api.TRF052, "TRF052")
         self.assertEqual(public_api.TRF053, "TRF053")
-        self.assertEqual(public_api.TRF055, "TRF055")
+        self.assertEqual(public_api.TRF002, "TRF002")
         self.assertEqual(public_api.TRF056, "TRF056")
         self.assertEqual(public_api.TRF057, "TRF057")
         self.assertEqual(public_api.TRF058, "TRF058")
@@ -148,7 +147,6 @@ class CheckModelingStructureTest(unittest.TestCase):
         self.assertIn("collect_class_bases", public_api.__all__)
         self.assertIn("model_dir_name", public_api.__all__)
         self.assertIn("render_rules_reference", public_api.__all__)
-        self.assertIn("TRF001", public_api.__all__)
         self.assertIn("TRF015", public_api.__all__)
         self.assertIn("TRF016", public_api.__all__)
         self.assertIn("TRF017", public_api.__all__)
@@ -188,7 +186,7 @@ class CheckModelingStructureTest(unittest.TestCase):
         self.assertIn("TRF051", public_api.__all__)
         self.assertIn("TRF052", public_api.__all__)
         self.assertIn("TRF053", public_api.__all__)
-        self.assertIn("TRF055", public_api.__all__)
+        self.assertIn("TRF002", public_api.__all__)
         self.assertIn("TRF056", public_api.__all__)
         self.assertIn("TRF057", public_api.__all__)
         self.assertIn("TRF058", public_api.__all__)
@@ -287,8 +285,8 @@ class CheckModelingStructureTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             custom_rules_path = _write_custom_rules_toml(
                 Path(tmp_dir),
-                trf001_description="Custom config_class guidance.",
-                trf001_default_enabled=False,
+                trf002_description="Custom base_model_prefix guidance.",
+                trf002_default_enabled=False,
             )
             stdout = StringIO()
             with (
@@ -299,24 +297,24 @@ class CheckModelingStructureTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         rendered = stdout.getvalue()
-        self.assertIn("TRF001: Custom config_class guidance. (default: disabled)", rendered)
+        self.assertIn("TRF002: Custom base_model_prefix guidance. (default: disabled)", rendered)
         self.assertIn(
-            "config_class on <Model>PreTrainedModel should match <Model>Config naming.",
-            mlinter.format_rule_summary("TRF001"),
+            "base_model_prefix on a PreTrainedModel, when set, should be a non-empty canonical string",
+            mlinter.format_rule_summary("TRF002"),
         )
 
     def test_content_hash_changes_with_custom_rule_specs(self):
         source = "class FooPreTrainedModel(PreTrainedModel):\n    pass\n"
-        default_digest = mlinter._content_hash(source, {mlinter.TRF001})
+        default_digest = mlinter._content_hash(source, {mlinter.TRF002})
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             custom_rules_path = _write_custom_rules_toml(
                 Path(tmp_dir),
-                trf001_description="Custom config_class guidance.",
-                trf001_default_enabled=False,
+                trf002_description="Custom config_class guidance.",
+                trf002_default_enabled=False,
             )
             with mlinter._using_rule_specs(custom_rules_path):
-                custom_digest = mlinter._content_hash(source, {mlinter.TRF001})
+                custom_digest = mlinter._content_hash(source, {mlinter.TRF002})
 
         self.assertNotEqual(default_digest, custom_digest)
         self.assertEqual(mlinter.ACTIVE_RULE_SPECS_PATH, mlinter.DEFAULT_RULE_SPECS_PATH)
@@ -535,7 +533,7 @@ class CheckModelingStructureTest(unittest.TestCase):
             custom_rules_path = _write_custom_rules_toml(Path(tmp_dir))
             stderr = StringIO()
             with (
-                patch.object(mlinter, "BUNDLED_DEPRECATED_TRF_RULES", frozenset({"TRF001"})),
+                patch.object(mlinter, "BUNDLED_DEPRECATED_TRF_RULES", frozenset({"TRF002"})),
                 patch.object(mlinter.sys, "argv", ["mlinter", "--rules-toml", str(custom_rules_path), "--list-rules"]),
                 redirect_stderr(stderr),
             ):
@@ -543,14 +541,14 @@ class CheckModelingStructureTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 2)
         self.assertIn("Deprecated rule(s) still active", _unwrapped(stderr.getvalue()))
-        self.assertIn("TRF001", _unwrapped(stderr.getvalue()))
+        self.assertIn("TRF002", _unwrapped(stderr.getvalue()))
 
     def test_deprecated_rule_with_a_surviving_module_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            custom_rules_path = _write_custom_rules_toml(Path(tmp_dir), trf001_default_enabled=False)
+            custom_rules_path = _write_custom_rules_toml(Path(tmp_dir), trf002_default_enabled=False)
             custom_rules_path.write_text(
                 custom_rules_path.read_text(encoding="utf-8").replace(
-                    "[rules.TRF001]\n", "[rules.TRF001]\ndeprecated = true\n", 1
+                    "[rules.TRF002]\n", "[rules.TRF002]\ndeprecated = true\n", 1
                 ),
                 encoding="utf-8",
             )
@@ -558,7 +556,7 @@ class CheckModelingStructureTest(unittest.TestCase):
                 with mlinter._using_rule_specs(custom_rules_path):
                     pass
 
-        self.assertIn("trf001.py still exists", str(exc.exception))
+        self.assertIn("trf002.py still exists", str(exc.exception))
         self.assertEqual(mlinter.ACTIVE_RULE_SPECS_PATH, mlinter.DEFAULT_RULE_SPECS_PATH)
 
     def test_analyze_file_allows_subscripted_class_bases(self):
@@ -749,7 +747,7 @@ class _LazyConfigMapping(OrderedDict[str, str]):
 
             yielded = list(mlinter.iter_modeling_files({generated, source}))
 
-            self.assertEqual(yielded, [source])
+            self.assertEqual(yielded, [generated, source])
 
     def test_iter_modeling_files_skips_generated_when_walking_models_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -828,7 +826,7 @@ class _LazyConfigMapping(OrderedDict[str, str]):
             )
             (repo / "modular_foo.py").write_text("class FooModel: ...\n", encoding="utf-8")
             found = {path.name for path in mlinter.iter_modeling_files(search_paths=[repo])}
-        self.assertEqual(found, {"modular_foo.py"})
+        self.assertEqual(found, {"modeling_foo.py", "modular_foo.py"})
 
     def test_search_paths_accept_an_explicit_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

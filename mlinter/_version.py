@@ -14,14 +14,9 @@
 
 import json
 import subprocess
+import tomllib
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
-
-
-try:
-    import tomllib  # Python >= 3.11
-except ModuleNotFoundError:
-    import tomli as tomllib  # Python 3.10 fallback
 
 
 PACKAGE_NAME = "transformers-mlinter"

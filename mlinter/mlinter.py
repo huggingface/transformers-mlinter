@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -38,12 +39,6 @@ from ._helpers import (
     read_file_head,
 )
 from ._version import __version__
-
-
-try:
-    import tomllib  # Python >= 3.11
-except ModuleNotFoundError:
-    import tomli as tomllib  # Python 3.10 fallback
 
 
 MODELING_PATTERNS = (
@@ -228,7 +223,7 @@ def _is_rule_allowlisted_for_file(rule_id: str, file_path: Path) -> bool:
 
 def _find_companion_files(file_path: Path) -> list[Path]:
     """Return companion files whose content may affect rule results."""
-    # TRF064 follows imports into sibling files and, for a modular file, reads what it generates.
+    # TRF063 follows imports into sibling files and, for a modular file, reads what it generates.
     siblings = sorted(path for path in file_path.parent.glob("*.py") if path.name != file_path.name)
     return sorted(set(_find_config_companions(file_path)) | set(siblings))
 
@@ -378,7 +373,7 @@ def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: l
 
 
 def colored_error_message(file_path: str, line_number: int, message: str) -> str:
-    return f"[bold red]{file_path}[/bold red]:[bold yellow]L{line_number}[/bold yellow]: {message}"
+    return f"[bold red]{file_path}[/bold red]:[bold yellow]{line_number}[/bold yellow]: {message}"
 
 
 def _path_is_within(file_path: Path, search_path: Path) -> bool:

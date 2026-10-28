@@ -70,8 +70,8 @@ __all__ = ["AcmeProcessor"]
 """
 
 
-class TRF064Test(RuleTestCase):
-    # --- TRF064: model-local imports must not need undeclared backends ---
+class TRF063Test(RuleTestCase):
+    # --- TRF063: model-local imports must not need undeclared backends ---
 
     def _run_in_model_dir(self, files: dict[str, str], target: str):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -81,9 +81,9 @@ class TRF064Test(RuleTestCase):
                 (model_dir / name).write_text(source, encoding="utf-8")
             target_path = model_dir / target
             violations = mlinter.analyze_file(
-                target_path, target_path.read_text(encoding="utf-8"), enabled_rules={mlinter.TRF064}
+                target_path, target_path.read_text(encoding="utf-8"), enabled_rules={mlinter.TRF063}
             )
-            return [v for v in violations if v.rule_id == mlinter.TRF064]
+            return [v for v in violations if v.rule_id == mlinter.TRF063]
 
     def test_flags_vision_processor_importing_torchvision_image_processor(self):
         violations = self._run_in_model_dir(
@@ -107,6 +107,31 @@ class TRF064Test(RuleTestCase):
             "processing_acme.py",
         )
         self.assertEqual(violations, [])
+
+    def test_flags_text_only_backend_pulled_in_by_sibling(self):
+        helpers = """
+from bs4 import BeautifulSoup
+
+
+def strip_markup(text):
+    return BeautifulSoup(text, "html.parser").get_text()
+"""
+        tokenizer = """
+from .markup_acme import strip_markup
+
+
+class AcmeTokenizer(PreTrainedTokenizer):
+    pass
+
+
+__all__ = ["AcmeTokenizer"]
+"""
+        violations = self._run_in_model_dir(
+            {"markup_acme.py": helpers, "tokenization_acme.py": tokenizer}, "tokenization_acme.py"
+        )
+        self.assertEqual(len(violations), 1)
+        self.assertIn("needs bs4", violations[0].message)
+        self.assertIn("markup_acme.py:2 `from bs4 import ...`", violations[0].message)
 
     def test_accepts_import_under_matching_guard(self):
         processor = """
@@ -256,7 +281,7 @@ class AcmeProcessor(BaseProcessor):
 
     def test_suppression(self):
         processor = VISION_PROCESSOR.format(module="image_processing_acme").replace(
-            "    from .image_processing_acme", "    # trf-ignore: TRF064\n    from .image_processing_acme"
+            "    from .image_processing_acme", "    # trf-ignore: TRF063\n    from .image_processing_acme"
         )
         violations = self._run_in_model_dir(
             {"image_processing_acme.py": TORCHVISION_IMAGE_PROCESSOR, "processing_acme.py": processor},

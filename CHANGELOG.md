@@ -9,14 +9,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- `TRF064`: a model-local relative import that runs at module import time must not need backends beyond what the
+- `TRF060`: files in a model directory must import from transformers with relative imports
+  (`from ...modeling_utils import X`), not `from transformers.modeling_utils import X` or
+  `import transformers...`. Tests, `convert_*.py` scripts and files outside a transformers checkout are skipped;
+  models added before the `2026-06-20` cutoff are exempt.
+- `TRF061`: flags a class in a `modular_*.py` file that subclasses another class defined in the same file. The
+  modular converter writes out bases imported from another model in full but keeps a same-file base as it is, so
+  the generated modeling file inherits from a sibling class and can no longer be read one class at a time.
+  `<Model>PreTrainedModel` subclasses and backward-compatibility aliases are exempt; models added before
+  2026-06-20 are exempt.
+- `TRF062`: `_init_weights` must initialize tensors with the transformers `initialization` module
+  (`from ... import initialization as init`), not `torch.nn.init`. The transformers functions skip a tensor
+  already loaded from a checkpoint; `torch.nn.init` is only guarded by a patch applied during
+  `initialize_weights`, which a function imported by name escapes. Helpers that only compute a value, such as
+  `calculate_gain`, are not flagged. Existing models were migrated in
+  [huggingface/transformers#49573](https://github.com/huggingface/transformers/pull/49573).
+- `TRF063`: a model-local relative import that runs at module import time must not need backends beyond what the
   importing file declares (its base requirements, the weakest `@requires` among its `__all__` objects, or an
   enclosing `is_<backend>_available()` guard). Imports are followed through sibling files; a `modular_*.py` file is
   checked through the files it generates. Catches a `@requires(backends=("vision",))` processor importing a
   torchvision image processor, which breaks `from transformers import *` with Pillow but no torch, as in
   [huggingface/transformers#49748](https://github.com/huggingface/transformers/pull/49748).
+
+### Changed
+
+- Python 3.11 is now the minimum supported version. The `tomli` dependency is gone: `tomllib` from the
+  standard library is used directly.
+- Console output prints a violation's location as `path:42:` instead of `path:L42:`, the `file:line` form
+  editors and terminals turn into a link that jumps to the line. `--output-json` and `--github-annotations`
+  are unchanged.
 - The lint cache now hashes every sibling file in the model directory, so editing an imported file re-checks its
   importers.
+
+### Improved
+
+- `TRF057` now covers video processors: a `BaseVideoProcessor` subclass in `video_processing_*.py` (or the
+  `modular_*.py` it is generated from) needs `@auto_docstring` on the class and on its `preprocess` method, as
+  image processors already do.
 
 ## [0.1.5] - 2026-08-28
 

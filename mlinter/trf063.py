@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF064: a module's top-level imports must not need backends its exported objects do not declare."""
+"""TRF063: a module's top-level imports must not need backends its exported objects do not declare."""
 
 import ast
 import re
@@ -26,18 +26,27 @@ RULE_ID = ""  # Set by discovery
 # Top-level package -> transformers backend name (keys of `BACKENDS_MAPPING`). Core dependencies such as
 # `tokenizers` and `numpy` are always installed and never listed.
 _PACKAGE_BACKENDS = {
+    "Levenshtein": "levenshtein",
     "PIL": "vision",
     "av": "av",
+    "bs4": "bs4",
     "cv2": "cv2",
+    "datasets": "datasets",
     "decord": "decord",
     "detectron2": "detectron2",
     "essentia": "essentia",
+    "faiss": "faiss",
+    "g2p_en": "g2p_en",
     "librosa": "librosa",
     "natten": "natten",
+    "nltk": "nltk",
     "pandas": "pandas",
     "phonemizer": "phonemizer",
     "pretty_midi": "pretty_midi",
+    "pyctcdecode": "pyctcdecode",
     "pytesseract": "pytesseract",
+    "rjieba": "rjieba",
+    "sacremoses": "sacremoses",
     "scipy": "scipy",
     "sentencepiece": "sentencepiece",
     "sklearn": "sklearn",
@@ -47,6 +56,7 @@ _PACKAGE_BACKENDS = {
     "torchaudio": "torchaudio",
     "torchcodec": "torchcodec",
     "torchvision": "torchvision",
+    "uroman": "uroman",
 }
 
 # Backends that cannot be installed without another one.
@@ -236,7 +246,7 @@ def _module_requirements(file_path: Path, memo: dict[Path, Requirements], stack:
     requirements: Requirements = {}
     for node, guard in _iter_module_imports(tree.body):
         if guard:
-            # A guarded import is the imported module's own business; TRF064 checks it when linting that file.
+            # A guarded import is the imported module's own business; TRF063 checks it when linting that file.
             continue
         for backend, reason in _import_requirements(file_path, node, memo, stack).items():
             requirements.setdefault(backend, reason)

@@ -179,17 +179,22 @@ def _problems(tree: ast.Module, source_lines: list[str]) -> list[tuple[str, int,
         if node.name.endswith("PreTrainedModel") and not has_config_annotation:
             flag(node.lineno, f"`{node.name}` must declare a `config: <Model>Config` annotation.")
 
-        # 3. An annotated `__init__(config: X)` must agree with the effective config. An unannotated one is not
-        # flagged: most of transformers does not annotate it yet.
+        # 3. `__init__(config: X)` must be annotated and agree with the effective config.
         init_and_arg = _init_config_arg(node)
         if init_and_arg is None:
             continue  # no __init__ taking `config`: the parent's is inherited
-        _, arg = init_and_arg
+        init, arg = init_and_arg
         effective = _effective_config(node, classes)
         init_config = _annotation_name(arg.annotation)
 
-        if init_config is None:
-            continue  # unannotated, or an exotic annotation (Optional[...], union, ...): nothing to compare
+        if arg.annotation is None:
+            flag(
+                init.lineno,
+                f"`{node.name}.__init__` must annotate its config argument: `config: {effective or '<Model>Config'}`, "
+                f"matching the config attribute it inherits or overrides.",
+            )
+        elif init_config is None:
+            continue  # exotic annotation (Optional[...], union, ...): not our business
         elif effective is None:
             flag(
                 arg.lineno,

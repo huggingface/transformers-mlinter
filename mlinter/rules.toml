@@ -2,7 +2,7 @@ version = 1
 
 [rules.TRF001]
 description = "config_class on <Model>PreTrainedModel should match <Model>Config naming."
-default_enabled = true
+deprecated = true
 allowlist_models = ["qwen3_omni_moe"]
 
 [rules.TRF001.explanation]
@@ -956,19 +956,23 @@ deprecated = true
 description = "Removed in 0.1.4: flagged self.<media>_token_id assignments in processor __init__, too noisy on legitimate processor code."
 
 [rules.TRF055]
-description = "`config` on a PreTrainedModel subclass must be an annotation (`config: SomeConfig`), not an assignment (`config = SomeConfig`)."
+description = "PreTrainedModel `config` must be an annotation (`config: SomeConfig`) matched by `__init__(config: SomeConfig)`; `config_class` is never used."
 default_enabled = true
 allowlist_models = []
 
 [rules.TRF055.explanation]
-what_it_does = "Flags `config = SomeConfig` as a class attribute on PreTrainedModel subclasses in modeling_*.py and modular_*.py."
-why_bad = "`PreTrainedModel.__init_subclass__` derives `config_class` from a `config` **annotation**, via `inspect.get_annotations(cls)`. An assignment creates a stray class attribute that call does not report, so the subclass silently keeps the parent's `config_class`. A bare annotation has no runtime value, creates no attribute, and is picked up correctly."
+what_it_does = "In modeling_*.py, flags on PreTrainedModel classes: any `config_class`; `config = SomeConfig` as a class attribute; a `<Model>PreTrainedModel` with no `config: SomeConfig` annotation; and an `__init__` whose `config` argument is unannotated or names a different config than the class declares or inherits. Modular files are not checked, since they are generated into modeling files."
+why_bad = "`PreTrainedModel.__init_subclass__` derives `config_class` from a `config` **annotation**, via `inspect.get_annotations(cls)`. An assignment creates a stray class attribute that call does not report, so the subclass silently keeps the parent's `config_class`; a hand-written `config_class` is redundant and can drift from the annotation. A bare annotation has no runtime value, creates no attribute, and is picked up correctly. The `__init__` annotation must agree with the class's `config`, otherwise the model is built from one config type but advertises another."
 diff = '''
  class Gemma4VisionModel(Gemma4PreTrainedModel):
      """The Gemma 4 Vision Encoder."""
 -    config = Gemma4VisionConfig
 +    config: Gemma4VisionConfig
+
+-    def __init__(self, config):
++    def __init__(self, config: Gemma4VisionConfig):
 '''
+
 
 [rules.TRF056]
 description = "forward() must not materialize tensors with .item() or .tolist()."

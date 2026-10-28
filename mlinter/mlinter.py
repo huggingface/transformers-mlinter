@@ -347,7 +347,7 @@ def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: l
     """
     if selected_paths is not None:
         for path in sorted(selected_paths):
-            if path.exists() and not _is_generated_file(path):
+            if path.exists():
                 yield path
         return
 
@@ -361,8 +361,7 @@ def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: l
             else:
                 candidates.add(search_path)
         for path in sorted(candidates):
-            if not _is_generated_file(path):
-                yield path
+            yield path
         return
 
     for root, patterns in ((MODELS_ROOT, MODELING_PATTERNS), (TESTS_ROOT, TEST_PATTERNS)):

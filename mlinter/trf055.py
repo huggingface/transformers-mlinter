@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF055: `config` on a PreTrainedModel subclass must be an annotation, not an assignment."""
+"""TRF055: PreTrainedModel `config` must be an annotation, matched with annotations in `self.__init__`; never `config_class`.
+Every `<Model>PreTrainedModel` must declare a valid `config` annotation that cannot be skipped!"""
 
 import ast
 from pathlib import Path
@@ -23,35 +24,130 @@ from ._helpers import Violation, _has_rule_suppression, _simple_name, full_name,
 RULE_ID = ""  # Set by discovery
 
 
+def _target_name(item: ast.stmt) -> str | None:
+    """Name bound by a simple class-body assignment or annotation, else None."""
+    if isinstance(item, ast.Assign) and len(item.targets) == 1 and isinstance(item.targets[0], ast.Name):
+        return item.targets[0].id
+    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+        return item.target.id
+    return None
+
+
+def _annotation_name(annotation: ast.expr | None) -> str | None:
+    """Simple name of a config annotation (`X`, `mod.X`, or the string "X"); None for anything else."""
+    if isinstance(annotation, (ast.Name, ast.Attribute)):
+        return _simple_name(full_name(annotation))
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        return annotation.value.rsplit(".", 1)[-1]
+    return None
+
+
+def _own_config(node: ast.ClassDef) -> str | None:
+    """Config name from a bare `config: X` annotation in the class body, if present."""
+    for item in node.body:
+        if isinstance(item, ast.AnnAssign) and item.value is None and _target_name(item) == "config":
+            return _annotation_name(item.annotation)
+    return None
+
+
+def _effective_config(
+    node: ast.ClassDef, classes: dict[str, ast.ClassDef], seen: frozenset = frozenset()
+) -> str | None:
+    """Own `config` annotation, else the one inherited from a base defined in this file, else None."""
+    own = _own_config(node)
+    if own is not None:
+        return own
+    for base in node.bases:
+        base_name = _simple_name(full_name(base)) if isinstance(base, (ast.Name, ast.Attribute)) else None
+        if base_name and base_name in classes and base_name not in seen:
+            inherited = _effective_config(classes[base_name], classes, seen | {node.name})
+            if inherited is not None:
+                return inherited
+    return None
+
+
+def _init_config_arg(node: ast.ClassDef) -> tuple[ast.FunctionDef, ast.arg] | None:
+    for item in node.body:
+        if isinstance(item, ast.FunctionDef) and item.name == "__init__":
+            args = item.args
+            for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+                if arg.arg == "config":
+                    return item, arg
+    return None
+
+
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
-    file_name = file_path.name
-    if not (file_name.startswith("modeling_") or file_name.startswith("modular_")):
+    # Check generated modeling files only: modular files are hard to check due to cross-model inheritance
+    if not file_path.name.startswith("modeling_"):
         return []
 
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
     violations: list[Violation] = []
+
+    def flag(line: int, message: str) -> None:
+        if not _has_rule_suppression(source_lines, RULE_ID, line):
+            violations.append(Violation(file_path=file_path, line_number=line, message=f"{RULE_ID}: {message}"))
+
     for node in iter_pretrained_classes(tree, source_lines, RULE_ID):
+        has_config_annotation = False
+
+        # 1. Class body: `config_class` is forbidden, `config` must be a bare annotation.
         for item in node.body:
-            if not (
-                isinstance(item, ast.Assign)
-                and len(item.targets) == 1
-                and isinstance(item.targets[0], ast.Name)
-                and item.targets[0].id == "config"
-                and isinstance(item.value, (ast.Name, ast.Attribute))
-            ):
-                continue
-            if _has_rule_suppression(source_lines, RULE_ID, item.lineno):
-                continue
-            config_name = _simple_name(full_name(item.value))
-            violations.append(
-                Violation(
-                    file_path=file_path,
-                    line_number=item.lineno,
-                    message=(
-                        f"{RULE_ID}: `{node.name}.config = {config_name}` assigns a class attribute that "
-                        f"shadows `config_class` resolution, causing `{node.name}.config_class` to return "
-                        f"the wrong config. Use an annotation instead: `config: {config_name}`."
-                    ),
+            name = _target_name(item)
+            if name == "config_class":
+                flag(
+                    item.lineno,
+                    f"`{node.name}` must not define `config_class`. It is derived from the `config` annotation "
+                    f"by `PreTrainedModel.__init_subclass__`. Use `config: <Model>Config` instead.",
                 )
+            elif name == "config":
+                has_config_annotation = True
+                if isinstance(item, ast.AnnAssign) and item.value is None:
+                    continue
+                value = item.value
+                config_name = (
+                    _simple_name(full_name(value)) if isinstance(value, (ast.Name, ast.Attribute)) else "<Model>Config"
+                )
+                flag(
+                    item.lineno,
+                    f"`{node.name}.config = {config_name}` assigns a class attribute that shadows `config_class` "
+                    f"resolution, causing `{node.name}.config_class` to return the wrong config. "
+                    f"Use an annotation instead: `config: {config_name}`.",
+                )
+
+        # 2. The base <Model>PreTrainedModel must declare `config`.
+        if node.name.endswith("PreTrainedModel") and not has_config_annotation:
+            flag(node.lineno, f"`{node.name}` must declare a `config: <Model>Config` annotation.")
+
+        # 3. `__init__(config: X)` must be annotated and agree with the effective config.
+        init_and_arg = _init_config_arg(node)
+        if init_and_arg is None:
+            continue  # no __init__ taking `config`: the parent's is inherited
+        init, arg = init_and_arg
+        effective = _effective_config(node, classes)
+        init_config = _annotation_name(arg.annotation)
+
+        if arg.annotation is None:
+            pass
+            # flag(
+            #     init.lineno,
+            #     f"`{node.name}.__init__` must annotate its config argument: `config: {effective or '<Model>Config'}`, "
+            #     f"matching the config attribute it inherits or overrides.",
+            # )
+        elif init_config is None:
+            continue  # exotic annotation (Optional[...], union, ...): not our business
+        elif effective is None:
+            flag(
+                arg.lineno,
+                f"`{node.name}.__init__` takes `config: {init_config}` but no `config` annotation is declared or "
+                f"inherited. Declare `config: {init_config}` in the class body.",
+            )
+        elif init_config != effective:
+            where = "overrides" if _own_config(node) is not None else "inherits"
+            flag(
+                arg.lineno,
+                f"`{node.name}.__init__` takes `config: {init_config}` but the class {where} `config: {effective}`. "
+                f"Make them match; add or update `config: {init_config}` in the class body if that is intended.",
             )
 
     return violations

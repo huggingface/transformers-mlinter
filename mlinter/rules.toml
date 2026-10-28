@@ -1104,3 +1104,22 @@ diff = '''
 -        nn.init.constant_(module.lambda1, self.config.layer_scale_init_value)
 +        init.constant_(module.lambda1, self.config.layer_scale_init_value)
 '''
+
+[rules.TRF063]
+description = "A sub-model call must not switch on every hidden state when the caller only reads some of them by index."
+default_enabled = true
+allowlist_models = []
+
+[rules.TRF063.explanation]
+what_it_does = "In modeling_*.py and modular_*.py, flags a call made with every hidden state switched on -- `output_hidden_states=True` passed to it, or `kwargs[\"output_hidden_states\"] = True` before a call that unpacks `**kwargs` -- when the same function then only reads that call's `.hidden_states[...]` by index: a single layer, a config value such as `vision_feature_layer`, or a comprehension over feature layers. Code that consumes the whole tuple (iterates it, slices it, or passes it to `torch.stack` or a weighted sum) is exempt, as are backbones decorated with `@filter_output_hidden_states`."
+why_bad = "`output_hidden_states=True` keeps one `(batch, seq, hidden)` tensor per layer alive until the call returns, even when only one or two of them are projected, so peak activation memory grows with depth times image tokens. For Aria in vLLM it raised peak activation memory from 5.79 GiB to 14.91 GiB, cost about half the KV cache and cut image throughput by roughly 30%. `hidden_states_to_capture` captures only the selected layers and returns indices that pick the same features."
+diff = '''
++from ...utils.output_capturing import hidden_states_to_capture
+ ...
+-        kwargs["output_hidden_states"] = True
++        vision_feature_layer, kwargs["output_hidden_states"] = hidden_states_to_capture(
++            vision_feature_layer, self.config.vision_config, kwargs.get("output_hidden_states")
++        )
+         image_outputs = self.vision_tower(pixel_values, return_dict=True, **kwargs)
+         selected_image_feature = image_outputs.hidden_states[vision_feature_layer]
+'''

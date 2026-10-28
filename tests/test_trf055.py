@@ -463,3 +463,156 @@ class TRF055Test(RuleTestCase):
                 config = BarConfig
         """
         self._assert_single(source, "config = BarConfig", "BarModel")
+
+    # --- a class built from a sub-config must declare it -----------------------------------------
+
+    COMPOSITE_CONFIG = """
+        class FooTextConfig(PreTrainedConfig):
+            pass
+
+        class FooVisionConfig(PreTrainedConfig):
+            pass
+
+        class FooConfig(PreTrainedConfig):
+            sub_configs_defaults = {"text_config": FooTextConfig, "vision_config": FooVisionConfig}
+    """
+
+    def _trf055_in_model_dir(self, modeling: str, configuration: str = COMPOSITE_CONFIG, modular: str | None = None):
+        """Lint `modeling_foo.py` (or `modular_foo.py`, generating `modeling_foo.py`) next to `configuration_foo.py`."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_dir = Path(tmp_dir) / "src" / "transformers" / "models" / "foo"
+            model_dir.mkdir(parents=True)
+            (model_dir / "configuration_foo.py").write_text(self._src(configuration), encoding="utf-8")
+            banner = "# This file was automatically generated from src/transformers/models/foo/modular_foo.py.\n"
+            (model_dir / "modeling_foo.py").write_text(
+                (banner if modular is not None else "") + self._src(modeling), encoding="utf-8"
+            )
+            target = model_dir / ("modular_foo.py" if modular is not None else "modeling_foo.py")
+            if modular is not None:
+                target.write_text(self._src(modular), encoding="utf-8")
+            violations = mlinter.analyze_file(
+                target, target.read_text(encoding="utf-8"), enabled_rules={mlinter.TRF055}
+            )
+        return [v for v in violations if v.rule_id == mlinter.TRF055]
+
+    INHERITS_COMPOSITE = """
+        class FooPreTrainedModel(PreTrainedModel):
+            config: FooConfig
+
+        class FooTextModel(FooPreTrainedModel):
+            def __init__(self, config: FooConfig):
+                super().__init__(config)
+
+        class FooModel(FooPreTrainedModel):
+            def __init__(self, config: FooConfig):
+                super().__init__(config)
+                self.language_model = {call}
+    """
+
+    def test_flags_class_built_from_sub_config_that_declares_the_composite(self):
+        for call in (
+            "FooTextModel(config.text_config)",
+            "FooTextModel(config=config.text_config)",
+            "FooTextModel._from_config(config.text_config)",
+        ):
+            with self.subTest(call):
+                source = self.INHERITS_COMPOSITE.format(call=call)
+                found = self._trf055_in_model_dir(source)
+                self.assertEqual(len(found), 1, [v.message for v in found])
+                self.assertEqual(found[0].line_number, self._line(source, "class FooTextModel"))
+                self.assertIn("built from `config.text_config` in `FooModel`", found[0].message)
+                self.assertIn("declares `config: FooConfig`, the composite model's config", found[0].message)
+                self.assertIn("Declare `config: FooTextConfig`", found[0].message)
+
+    def test_flags_class_built_from_sub_config_that_declares_another_sub_config(self):
+        source = """
+            class FooPreTrainedModel(PreTrainedModel):
+                config: FooConfig
+
+            class FooTextModel(FooPreTrainedModel):
+                config: FooVisionConfig
+
+                def __init__(self, config: FooVisionConfig):
+                    super().__init__(config)
+
+            class FooModel(FooPreTrainedModel):
+                def __init__(self, config: FooConfig):
+                    super().__init__(config)
+                    self.language_model = FooTextModel(config.text_config)
+        """
+        found = self._trf055_in_model_dir(source)
+        self.assertEqual(len(found), 1, [v.message for v in found])
+        self.assertIn("declares `config: FooVisionConfig`. Declare `config: FooTextConfig`", found[0].message)
+
+    def test_accepts_class_declaring_its_sub_config(self):
+        source = """
+            class FooPreTrainedModel(PreTrainedModel):
+                config: FooConfig
+
+            class FooTextModel(FooPreTrainedModel):
+                config: FooTextConfig
+
+                def __init__(self, config: FooTextConfig):
+                    super().__init__(config)
+
+            class FooModel(FooPreTrainedModel):
+                def __init__(self, config: FooConfig):
+                    super().__init__(config)
+                    self.language_model = FooTextModel._from_config(config.text_config)
+        """
+        self.assertEqual(self._trf055_in_model_dir(source), [])
+
+    def test_skips_sub_config_typed_as_auto_config(self):
+        configuration = """
+            class FooConfig(PreTrainedConfig):
+                sub_configs = {"text_config": AutoConfig}
+        """
+        source = self.INHERITS_COMPOSITE.format(call="FooTextModel(config.text_config)")
+        self.assertEqual(self._trf055_in_model_dir(source, configuration=configuration), [])
+
+    def test_without_sub_config_table_flags_only_the_composite(self):
+        configuration = """
+            class FooConfig(PreTrainedConfig):
+                pass
+        """
+        source = self.INHERITS_COMPOSITE.format(call="FooTextModel(config.text_config)")
+        found = self._trf055_in_model_dir(source, configuration=configuration)
+        self.assertEqual(len(found), 1, [v.message for v in found])
+        self.assertIn("Declare the config class of `config.text_config`", found[0].message)
+
+    def test_ignores_non_pretrained_classes_built_from_sub_config(self):
+        source = """
+            class FooPreTrainedModel(PreTrainedModel):
+                config: FooConfig
+
+            class FooVisionTower(nn.Module):
+                def __init__(self, config):
+                    super().__init__()
+
+            class FooModel(FooPreTrainedModel):
+                def __init__(self, config: FooConfig):
+                    super().__init__(config)
+                    self.vision_tower = FooVisionTower(config.vision_config)
+        """
+        self.assertEqual(self._trf055_in_model_dir(source), [])
+
+    def test_modular_pass_subclass_reported_on_its_class(self):
+        # The shape that motivated the check: the modular class adds nothing, so it inherits the composite config
+        # from `FooPreTrainedModel` and the converter renames the copied `__init__` annotation to match.
+        modular = """
+            from ..llama.modeling_llama import LlamaModel
+
+            class FooTextModel(LlamaModel):
+                pass
+        """
+        modeling = self.INHERITS_COMPOSITE.format(call="FooTextModel._from_config(config.text_config)")
+        found = self._trf055_in_model_dir(modeling, modular=modular)
+        self.assertEqual(len(found), 1, [v.message for v in found])
+        self.assertEqual(found[0].line_number, self._line(modular, "class FooTextModel"))
+        self.assertIn("generated modeling_foo.py:", found[0].message)
+
+    def test_suppression_on_class_built_from_sub_config(self):
+        source = self.INHERITS_COMPOSITE.format(call="FooTextModel(config.text_config)").replace(
+            "class FooTextModel(FooPreTrainedModel):", "class FooTextModel(FooPreTrainedModel):  # trf-ignore: TRF055"
+        )
+        self.assertEqual(self._trf055_in_model_dir(source), [])

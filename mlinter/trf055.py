@@ -87,6 +87,64 @@ def _init_config_arg(node: ast.ClassDef) -> tuple[ast.FunctionDef, ast.arg] | No
     return None
 
 
+# Composite config class -> {sub-config attribute: sub-config class}, per model directory.
+_SUB_CONFIGS_CACHE: dict[Path, dict[str, dict[str, str]]] = {}
+_SUB_CONFIG_TABLES = ("sub_configs", "sub_configs_defaults")
+# A sub-config typed as `AutoConfig` can be any model's config, so it says nothing about the class built from it.
+_UNTYPED_SUB_CONFIGS = ("AutoConfig", "PreTrainedConfig", "PretrainedConfig")
+
+
+def _sub_configs(model_dir: Path) -> dict[str, dict[str, str]]:
+    """`sub_configs` / `sub_configs_defaults` of every config class in the model's `configuration_*.py` files."""
+    if model_dir in _SUB_CONFIGS_CACHE:
+        return _SUB_CONFIGS_CACHE[model_dir]
+    tables: dict[str, dict[str, str]] = {}
+    for path in sorted(model_dir.glob("configuration_*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for item in node.body:
+                if _target_name(item) not in _SUB_CONFIG_TABLES or not isinstance(item.value, ast.Dict):
+                    continue
+                table = tables.setdefault(node.name, {})
+                for key, value in zip(item.value.keys, item.value.values):
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        sub_config = _annotation_name(value)
+                        if sub_config is not None:
+                            table[key.value] = sub_config
+    _SUB_CONFIGS_CACHE[model_dir] = tables
+    return tables
+
+
+def _built_from_sub_config(node: ast.ClassDef) -> list[tuple[str, str, int]]:
+    """`(class name, sub-config attribute, line)` for every `X(config.<x>_config)` or `X._from_config(...)` in a method."""
+    built = []
+    for item in node.body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for call in ast.walk(item):
+            if not isinstance(call, ast.Call):
+                continue
+            argument = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == "config"), None)
+            if not (
+                isinstance(argument, ast.Attribute)
+                and isinstance(argument.value, ast.Name)
+                and argument.value.id == "config"
+                and argument.attr.endswith("_config")
+            ):
+                continue
+            func = call.func
+            if isinstance(func, ast.Name):
+                built.append((func.id, argument.attr, call.lineno))
+            elif isinstance(func, ast.Attribute) and func.attr == "_from_config" and isinstance(func.value, ast.Name):
+                built.append((func.value.id, argument.attr, call.lineno))
+    return built
+
+
 def _generated_modeling_files(modular_path: Path) -> list[Path]:
     """The `modeling_*.py` files the converter produced from `modular_path`, identified by their banner."""
     generated = []
@@ -112,7 +170,7 @@ def _check_modular(tree: ast.Module, file_path: Path, source_lines: list[str]) -
             generated_tree = ast.parse(generated_source)
         except (OSError, SyntaxError):
             continue
-        for class_name, line, message in _problems(generated_tree, generated_source.splitlines()):
+        for class_name, line, message in _problems(generated_tree, generated_source.splitlines(), generated.parent):
             modular_class = modular_classes.get(class_name)
             if modular_class is None or _has_rule_suppression(source_lines, RULE_ID, modular_class.lineno):
                 continue
@@ -133,13 +191,14 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
         return []
     return [
         Violation(file_path=file_path, line_number=line, message=f"{RULE_ID}: {message}")
-        for _, line, message in _problems(tree, source_lines)
+        for _, line, message in _problems(tree, source_lines, file_path.parent)
     ]
 
 
-def _problems(tree: ast.Module, source_lines: list[str]) -> list[tuple[str, int, str]]:
+def _problems(tree: ast.Module, source_lines: list[str], model_dir: Path) -> list[tuple[str, int, str]]:
     """`(class name, line, message)` for every problem in a modeling file, suppressions already applied."""
     classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    pretrained_classes = list(iter_pretrained_classes(tree, source_lines, RULE_ID))
     problems: list[tuple[str, int, str]] = []
     class_name = ""
 
@@ -147,7 +206,8 @@ def _problems(tree: ast.Module, source_lines: list[str]) -> list[tuple[str, int,
         if not _has_rule_suppression(source_lines, RULE_ID, line):
             problems.append((class_name, line, message))
 
-    for node in iter_pretrained_classes(tree, source_lines, RULE_ID):
+    problems.extend(_sub_config_problems(pretrained_classes, classes, source_lines, model_dir))
+    for node in pretrained_classes:
         class_name = node.name
         has_config_annotation = False
 
@@ -209,4 +269,53 @@ def _problems(tree: ast.Module, source_lines: list[str]) -> list[tuple[str, int,
                 f"Make them match; add or update `config: {init_config}` in the class body if that is intended.",
             )
 
+    return problems
+
+
+def _sub_config_problems(
+    pretrained_classes: list[ast.ClassDef],
+    classes: dict[str, ast.ClassDef],
+    source_lines: list[str],
+    model_dir: Path,
+) -> list[tuple[str, int, str]]:
+    """4. A class built from `config.<x>_config` must declare that sub-config, not the composite config.
+
+    Each side can look consistent on its own: a modular `class AcmeTextModel(LlamaModel): pass` inherits
+    `config: AcmeConfig` from `AcmePreTrainedModel`, and the converter renames the copied `__init__` annotation to
+    match. Only the call site in the composite model says which config the class is really built from.
+    """
+    pretrained_names = {node.name for node in pretrained_classes}
+    sub_configs = _sub_configs(model_dir)
+    problems: list[tuple[str, int, str]] = []
+    reported: set[tuple[str, str]] = set()
+    for node in pretrained_classes:
+        outer = _effective_config(node, classes)
+        if outer is None:
+            continue
+        for built, attribute, call_line in _built_from_sub_config(node):
+            if built not in pretrained_names or (built, attribute) in reported:
+                continue
+            declared = _effective_config(classes[built], classes)
+            expected = sub_configs.get(outer, {}).get(attribute)
+            if declared is None or expected in _UNTYPED_SUB_CONFIGS:
+                continue
+            if expected is not None and declared == expected:
+                continue
+            if expected is None and declared != outer:
+                continue  # no sub-config table to compare against: only the composite config itself is surely wrong
+            line = classes[built].lineno
+            if _has_rule_suppression(source_lines, RULE_ID, line):
+                continue
+            reported.add((built, attribute))
+            should_be = f"`config: {expected}`" if expected else f"the config class of `config.{attribute}`"
+            consequence = ", the composite model's config" if declared == outer else ""
+            problems.append(
+                (
+                    built,
+                    line,
+                    f"`{built}` is built from `config.{attribute}` in `{node.name}` (line {call_line}) but declares "
+                    f"`config: {declared}`{consequence}. Declare {should_be} in the class body and annotate "
+                    "`__init__` to match.",
+                )
+            )
     return problems

@@ -272,11 +272,42 @@ class FooMaskingGenerator:
 """
         self.assertEqual(self._run(mlinter.TRF057, source, file_name="image_processing_foo.py"), [])
 
-    def test_trf057_ignores_video_processors(self):
+    def test_trf057_flags_undecorated_video_processor(self):
         source = """
 class FooVideoProcessor(BaseVideoProcessor):
     def preprocess(self, videos, **kwargs):
         return videos
+"""
+        violations = self._run(mlinter.TRF057, source, file_name="video_processing_foo.py")
+        self.assertEqual(len(violations), 2)
+        self.assertIn("`FooVideoProcessor` is a public class", violations[0].message)
+        self.assertIn("`FooVideoProcessor.preprocess` is a public method", violations[1].message)
+
+    def test_trf057_accepts_decorated_video_processor(self):
+        source = """
+@auto_docstring
+class FooVideoProcessor(BaseVideoProcessor):
+    @auto_docstring
+    def preprocess(self, videos, **kwargs):
+        return videos
+"""
+        self.assertEqual(self._run(mlinter.TRF057, source, file_name="video_processing_foo.py"), [])
+
+    def test_trf057_flags_video_processor_whose_base_is_another_model(self):
+        source = """
+from ..qwen2_vl.video_processing_qwen2_vl import Qwen2VLVideoProcessor
+
+class FooVideoProcessor(Qwen2VLVideoProcessor):
+    pass
+"""
+        violations = self._run(mlinter.TRF057, source, file_name="video_processing_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`FooVideoProcessor` is a public class", violations[0].message)
+
+    def test_trf057_ignores_kwargs_typed_dict_in_a_video_processing_file(self):
+        source = """
+class FooVideoProcessorKwargs(VideosKwargs, total=False):
+    max_frames: int
 """
         self.assertEqual(self._run(mlinter.TRF057, source, file_name="video_processing_foo.py"), [])
 

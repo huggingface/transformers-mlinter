@@ -12,193 +12,86 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tempfile
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from tests.rule_test_utils import Path, RuleTestCase, _helpers_mod, date, mlinter, patch
 
 
 class TRF060Test(RuleTestCase):
-    # --- trf060: `_no_split_modules` must only list classes that exist ---
+    # --- TRF060: model files must import from transformers with relative imports ---
 
-    def _trf060(self, source: str, file_name: str = "modeling_foo.py") -> list:
-        file_path = Path(f"src/transformers/models/foo/{file_name}")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF060})
+    def _trf060(self, source: str, file_path: str = "src/transformers/models/foo/modeling_foo.py", contributed=None):
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=contributed):
+            violations = mlinter.analyze_file(Path(file_path), source, enabled_rules={mlinter.TRF060})
         return [v for v in violations if v.rule_id == mlinter.TRF060]
 
-    def _trf060_modular(self, modular_source: str, generated_source: str | None, generated_name="modeling_foo.py"):
-        # Modular files are checked through the modeling file they generate, which is read from disk.
-        with tempfile.TemporaryDirectory() as tmp:
-            if generated_source is not None:
-                (Path(tmp) / generated_name).write_text(generated_source, encoding="utf-8")
-            violations = mlinter.analyze_file(
-                Path(tmp) / "modular_foo.py", modular_source, enabled_rules={mlinter.TRF060}
-            )
-        return [v for v in violations if v.rule_id == mlinter.TRF060]
+    def test_trf060_flags_absolute_import_of_shared_module(self):
+        violations = self._trf060("from transformers.modeling_utils import PreTrainedModel\n")
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line_number, 1)
+        self.assertIn("`from ...modeling_utils import PreTrainedModel`", violations[0].message)
 
-    GENERATED_HEADER = "# This file was automatically generated from src/transformers/models/foo/modular_foo.py.\n"
+    def test_trf060_flags_top_level_package_import(self):
+        violations = self._trf060("from transformers import initialization as init\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`from ... import initialization as init`", violations[0].message)
 
-    def test_trf060_flags_missing_class(self):
+    def test_trf060_suggests_sibling_module_for_own_model(self):
+        violations = self._trf060("from transformers.models.foo.configuration_foo import FooConfig\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`from .configuration_foo import FooConfig`", violations[0].message)
+
+    def test_trf060_flags_modular_import_from_another_model(self):
+        source = "from transformers.models.llama.modeling_llama import LlamaAttention, LlamaMLP\n"
+        violations = self._trf060(source, file_path="src/transformers/models/foo/modular_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`from ..llama.modeling_llama import LlamaAttention, LlamaMLP`", violations[0].message)
+
+    def test_trf060_elides_long_import_lists(self):
+        source = "from transformers.models.llama.modeling_llama import A, B, C, D\n"
+        violations = self._trf060(source, file_path="src/transformers/models/foo/modular_foo.py")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`from ..llama.modeling_llama import ...`", violations[0].message)
+
+    def test_trf060_flags_plain_import_statement(self):
+        violations = self._trf060("import transformers.utils.logging as hf_logging\n")
+        self.assertEqual(len(violations), 1)
+        self.assertIn("`from ...utils import logging as hf_logging`", violations[0].message)
+
+    def test_trf060_flags_import_inside_function(self):
         source = """
-class FooTextDecoderLayer(nn.Module):
-    pass
-
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooDecoderLayer"]
+def foo():
+    from transformers.utils import logging
 """
-        trf060 = self._trf060(source)
-        self.assertEqual(len(trf060), 1)
-        self.assertIn("FooPreTrainedModel", trf060[0].message)
-        self.assertIn("`FooDecoderLayer`", trf060[0].message)
-        self.assertIn("`FooTextDecoderLayer`", trf060[0].message)  # suggestion
+        violations = self._trf060(source)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line_number, 3)
 
-    def test_trf060_flags_each_missing_class(self):
+    def test_trf060_allows_relative_and_third_party_imports(self):
         source = """
-class FooLayer(nn.Module):
-    pass
+import torch
+from torch import nn
+from transformers_extra import thing
 
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooLayer", "MissingA", "MissingB"]
-"""
-        self.assertEqual(len(self._trf060(source)), 2)
-
-    def test_trf060_flags_annotated_assignment(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules: list[str] = ["Missing"]
-"""
-        self.assertEqual(len(self._trf060(source)), 1)
-
-    def test_trf060_allows_existing_classes(self):
-        source = """
-class FooDecoderLayer(nn.Module):
-    pass
-
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooDecoderLayer"]
+from ...modeling_utils import PreTrainedModel
+from ..llama.modeling_llama import LlamaAttention
+from .configuration_foo import FooConfig
 """
         self.assertEqual(self._trf060(source), [])
 
-    def test_trf060_allows_imported_classes(self):
-        source = """
-from ..clip.modeling_clip import CLIPEncoderLayer
+    def test_trf060_ignores_files_outside_a_transformers_checkout(self):
+        # In a standalone model repo `transformers` is a dependency: absolute is the only valid form.
+        source = "from transformers.modeling_utils import PreTrainedModel\n"
+        self.assertEqual(self._trf060(source, file_path="my_model/modeling_foo.py"), [])
 
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["CLIPEncoderLayer"]
-"""
+    def test_trf060_ignores_conversion_scripts(self):
+        source = "from transformers import FooConfig, FooModel\n"
+        path = "src/transformers/models/foo/convert_foo_to_hf.py"
+        self.assertEqual(self._trf060(source, file_path=path), [])
+
+    def test_trf060_cutoff_exempts_old_model(self):
+        source = "from transformers.modeling_utils import PreTrainedModel\n"
+        self.assertEqual(self._trf060(source, contributed=date(2020, 1, 1)), [])
+
+    def test_trf060_suppression_comment(self):
+        source = "from transformers.modeling_utils import PreTrainedModel  # trf-ignore: TRF060\n"
         self.assertEqual(self._trf060(source), [])
-
-    def test_trf060_allows_torch_parametrized_classes(self):
-        # torch.nn.utils.parametrize creates `Parametrized<Name>` classes at runtime.
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["ParametrizedConv1d"]
-"""
-        self.assertEqual(self._trf060(source), [])
-
-    def test_trf060_skips_non_literal_values(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooLayer"]
-
-class FooModel(FooPreTrainedModel):
-    _no_split_modules = FooPreTrainedModel._no_split_modules
-"""
-        # FooLayer is missing in FooPreTrainedModel, but FooModel's non-literal value is not reported again.
-        self.assertEqual(len(self._trf060(source)), 1)
-
-    def test_trf060_allows_none_declaration(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = None
-"""
-        self.assertEqual(self._trf060(source), [])
-
-    def test_trf060_skips_non_modeling_files(self):
-        source = """
-class FooConfig(PreTrainedConfig):
-    _no_split_modules = ["Missing"]
-"""
-        self.assertEqual(self._trf060(source, file_name="configuration_foo.py"), [])
-
-    def test_trf060_respects_suppression_comment(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    # trf-ignore: TRF060
-    _no_split_modules = ["TimmWrapperForImageClassification"]
-"""
-        self.assertEqual(self._trf060(source), [])
-
-    def test_trf060_modular_checks_generated_file(self):
-        # The modular class inherits `_no_split_modules`; the converter renames the prefix to a class that
-        # does not exist in the generated file.
-        modular = """
-class FooTextDecoderLayer(BarDecoderLayer):
-    pass
-
-class FooModel(BarModel):
-    pass
-"""
-        generated = (
-            self.GENERATED_HEADER
-            + """
-class FooTextDecoderLayer(nn.Module):
-    pass
-
-class FooModel(FooPreTrainedModel):
-    _no_split_modules = ["FooDecoderLayer"]
-"""
-        )
-        trf060 = self._trf060_modular(modular, generated)
-        self.assertEqual(len(trf060), 1)
-        self.assertIn("FooModel", trf060[0].message)
-        self.assertIn("`FooDecoderLayer`", trf060[0].message)
-        self.assertIn("`FooTextDecoderLayer`", trf060[0].message)
-
-    def test_trf060_modular_allows_valid_generated_file(self):
-        modular = """
-class FooModel(BarModel):
-    pass
-"""
-        generated = (
-            self.GENERATED_HEADER
-            + """
-class FooTextDecoderLayer(nn.Module):
-    pass
-
-class FooModel(FooPreTrainedModel):
-    _no_split_modules = ["FooTextDecoderLayer"]
-"""
-        )
-        self.assertEqual(self._trf060_modular(modular, generated), [])
-
-    def test_trf060_modular_reports_on_modular_class_so_it_can_be_suppressed(self):
-        modular = """
-class FooModel(BarModel):  # trf-ignore: TRF060
-    pass
-"""
-        generated = (
-            self.GENERATED_HEADER
-            + """
-class FooModel(FooPreTrainedModel):  # trf-ignore: TRF060
-    _no_split_modules = ["Missing"]
-"""
-        )
-        self.assertEqual(self._trf060_modular(modular, generated), [])
-
-    def test_trf060_modular_without_generated_file_is_skipped(self):
-        modular = """
-class FooModel(BarModel):
-    pass
-"""
-        self.assertEqual(self._trf060_modular(modular, None), [])
-
-    def test_trf060_modular_ignores_files_generated_from_another_modular(self):
-        modular = """
-class FooModel(BarModel):
-    pass
-"""
-        generated = """# This file was automatically generated from src/transformers/models/foo/modular_other.py.
-class FooModel(FooPreTrainedModel):
-    _no_split_modules = ["Missing"]
-"""
-        self.assertEqual(self._trf060_modular(modular, generated), [])

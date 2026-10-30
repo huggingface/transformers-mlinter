@@ -1041,3 +1041,25 @@ diff = '''
 +    def forward(self, hidden_states, top_k_index, top_k_weights):
          ...
 '''
+
+
+[rules.TRF060]
+description = "`_no_split_modules` must only list classes that exist in the (generated) modeling file."
+default_enabled = true
+allowlist_models = []
+ 
+[rules.TRF060.explanation]
+what_it_does = """
+Checks every `_no_split_modules` assignment against the classes the modeling file defines or imports. \
+`modeling_*.py` files are checked directly. `modular_*.py` files are checked through the `modeling_*.py` \
+files they generate, and each problem is reported on the modular class so `# trf-ignore: TRFXXX` works there."""
+why_bad = """
+accelerate matches `_no_split_modules` against the class names of the model's submodules. A name that is \
+not a class never matches, so the layer is silently split across devices. In modular files this happens \
+when `_no_split_modules` is inherited from another model: the converter renames the prefix but not the \
+class (`Qwen4ExpDecoderLayer` vs. the real `Qwen4ExpTextDecoderLayer`)."""
+diff = """
+ class Qwen4ExpModel(Qwen3_5MoeModel):
+-    # inherits ["Qwen3_5MoeDecoderLayer"] -> converted to "Qwen4ExpDecoderLayer", which does not exist
++    _no_split_modules = ["Qwen4ExpTextDecoderLayer"]
+"""

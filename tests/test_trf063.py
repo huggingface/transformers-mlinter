@@ -13,163 +13,278 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import RuleTestCase, mlinter
+from tests.rule_test_utils import Path, RuleTestCase, mlinter, tempfile
+
+
+TORCHVISION_IMAGE_PROCESSOR = """
+import torch
+from torchvision.transforms.v2 import functional as tvF
+
+from ...image_processing_backends import TorchvisionBackend
+
+
+class AcmeImageProcessorKwargs(ImagesKwargs, total=False):
+    max_soft_tokens: int
+
+
+class AcmeImageProcessor(TorchvisionBackend):
+    pass
+
+
+__all__ = ["AcmeImageProcessor"]
+"""
+
+PIL_IMAGE_PROCESSOR = """
+from PIL import Image
+
+from ...image_processing_backends import PilBackend
+
+
+class AcmeImageProcessorKwargs(ImagesKwargs, total=False):
+    max_soft_tokens: int
+
+
+class AcmeImageProcessorPil(PilBackend):
+    pass
+
+
+__all__ = ["AcmeImageProcessorPil"]
+"""
+
+VISION_PROCESSOR = """
+from ...processing_utils import ProcessorMixin
+from ...utils import is_vision_available
+from ...utils.import_utils import requires
+
+
+if is_vision_available():
+    from .{module} import AcmeImageProcessorKwargs
+
+
+@requires(backends=("vision",))
+class AcmeProcessor(ProcessorMixin):
+    pass
+
+
+__all__ = ["AcmeProcessor"]
+"""
 
 
 class TRF063Test(RuleTestCase):
-    # --- TRF063: don't capture every hidden state to read only some of them ---
+    # --- TRF063: model-local imports must not need undeclared backends ---
 
-    def test_trf063_flags_forced_kwargs_with_single_index(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, return_dict=True, **kwargs)
-        selected_image_feature = image_outputs.hidden_states[vision_feature_layer]
-        return self.multi_modal_projector(selected_image_feature)
-"""
-        violations = self._run(mlinter.TRF063, source)
-        self.assertEqual(len(violations), 1)
-        self.assertEqual(violations[0].line_number, 4)
-        self.assertIn("get_image_features", violations[0].message)
-        self.assertIn("hidden_states_to_capture", violations[0].message)
+    def _run_in_model_dir(self, files: dict[str, str], target: str):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_dir = Path(tmp_dir) / "src" / "transformers" / "models" / "acme"
+            model_dir.mkdir(parents=True)
+            for name, source in files.items():
+                (model_dir / name).write_text(source, encoding="utf-8")
+            target_path = model_dir / target
+            violations = mlinter.analyze_file(
+                target_path, target_path.read_text(encoding="utf-8"), enabled_rules={mlinter.TRF063}
+            )
+            return [v for v in violations if v.rule_id == mlinter.TRF063]
 
-    def test_trf063_flags_comprehension_over_feature_layers(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, **kwargs):
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, **kwargs)
-        hs_pool = [image_outputs.hidden_states[layer_idx] for layer_idx in self.config.vision_feature_layer]
-        return torch.cat(hs_pool, dim=-1)
-"""
-        self.assertEqual(len(self._run(mlinter.TRF063, source)), 1)
-
-    def test_trf063_flags_keyword_flag_and_alias(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_img_features(self, img_embeds, attention_mask):
-        img_processor_output = self.img_processor(
-            img_embeds, patch_attention_mask=attention_mask, output_hidden_states=True
+    def test_flags_vision_processor_importing_torchvision_image_processor(self):
+        violations = self._run_in_model_dir(
+            {
+                "image_processing_acme.py": TORCHVISION_IMAGE_PROCESSOR,
+                "processing_acme.py": VISION_PROCESSOR.format(module="image_processing_acme"),
+            },
+            "processing_acme.py",
         )
-        hidden_states = img_processor_output.hidden_states
-        return hidden_states[self.layer_idx]
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line_number, 8)
+        self.assertIn("needs torch, torchvision", violations[0].message)
+        self.assertIn("image_processing_acme.py:2 `import torch`", violations[0].message)
+
+    def test_accepts_vision_processor_importing_pil_image_processor(self):
+        violations = self._run_in_model_dir(
+            {
+                "image_processing_pil_acme.py": PIL_IMAGE_PROCESSOR,
+                "processing_acme.py": VISION_PROCESSOR.format(module="image_processing_pil_acme"),
+            },
+            "processing_acme.py",
+        )
+        self.assertEqual(violations, [])
+
+    def test_flags_text_only_backend_pulled_in_by_sibling(self):
+        helpers = """
+from bs4 import BeautifulSoup
+
+
+def strip_markup(text):
+    return BeautifulSoup(text, "html.parser").get_text()
 """
-        violations = self._run(mlinter.TRF063, source)
+        tokenizer = """
+from .markup_acme import strip_markup
+
+
+class AcmeTokenizer(PreTrainedTokenizer):
+    pass
+
+
+__all__ = ["AcmeTokenizer"]
+"""
+        violations = self._run_in_model_dir(
+            {"markup_acme.py": helpers, "tokenization_acme.py": tokenizer}, "tokenization_acme.py"
+        )
+        self.assertEqual(len(violations), 1)
+        self.assertIn("needs bs4", violations[0].message)
+        self.assertIn("markup_acme.py:2 `from bs4 import ...`", violations[0].message)
+
+    def test_accepts_import_under_matching_guard(self):
+        processor = """
+from ...utils import is_torchvision_available, is_vision_available
+
+
+if is_vision_available() and is_torchvision_available():
+    from .image_processing_acme import AcmeImageProcessorKwargs
+
+
+class AcmeProcessor(ProcessorMixin):
+    pass
+
+
+__all__ = ["AcmeProcessor"]
+"""
+        violations = self._run_in_model_dir(
+            {"image_processing_acme.py": TORCHVISION_IMAGE_PROCESSOR, "processing_acme.py": processor},
+            "processing_acme.py",
+        )
+        self.assertEqual(violations, [])
+
+    def test_accepts_import_covered_by_requires(self):
+        processor = VISION_PROCESSOR.format(module="image_processing_acme").replace(
+            '@requires(backends=("vision",))', '@requires(backends=("vision", "torch", "torchvision"))'
+        )
+        violations = self._run_in_model_dir(
+            {"image_processing_acme.py": TORCHVISION_IMAGE_PROCESSOR, "processing_acme.py": processor},
+            "processing_acme.py",
+        )
+        self.assertEqual(violations, [])
+
+    def test_weakest_exported_object_decides(self):
+        # The lazy module imports the file as soon as `acme_helper`'s (empty) requirements are met.
+        processor = VISION_PROCESSOR.format(module="image_processing_acme").replace(
+            '@requires(backends=("vision",))', '@requires(backends=("vision", "torch", "torchvision"))'
+        )
+        processor = processor.replace(
+            '__all__ = ["AcmeProcessor"]',
+            'def acme_helper():\n    pass\n\n\n__all__ = ["AcmeProcessor", "acme_helper"]',
+        )
+        violations = self._run_in_model_dir(
+            {"image_processing_acme.py": TORCHVISION_IMAGE_PROCESSOR, "processing_acme.py": processor},
+            "processing_acme.py",
+        )
+        self.assertEqual(len(violations), 1)
+        self.assertIn("needs torch, torchvision at", violations[0].message)
+        self.assertIn("with only vision installed", violations[0].message)
+
+    def test_follows_transitive_imports(self):
+        utils = "from .image_processing_acme import AcmeImageProcessorKwargs\n"
+        processor = VISION_PROCESSOR.format(module="acme_utils")
+        violations = self._run_in_model_dir(
+            {
+                "image_processing_acme.py": TORCHVISION_IMAGE_PROCESSOR,
+                "acme_utils.py": utils,
+                "processing_acme.py": processor,
+            },
+            "processing_acme.py",
+        )
+        self.assertEqual(len(violations), 1)
+        self.assertIn("acme_utils.py:1", violations[0].message)
+        self.assertIn("-> image_processing_acme.py:2 `import torch`", violations[0].message)
+
+    def test_ignores_guarded_and_optional_imports_in_the_imported_module(self):
+        image_processor = """
+from ...utils import is_torch_available
+
+
+if is_torch_available():
+    import torch
+
+try:
+    import torchvision
+except ImportError:
+    torchvision = None
+
+
+class AcmeImageProcessorKwargs(ImagesKwargs, total=False):
+    pass
+"""
+        violations = self._run_in_model_dir(
+            {
+                "image_processing_acme.py": image_processor,
+                "processing_acme.py": VISION_PROCESSOR.format(module="image_processing_acme"),
+            },
+            "processing_acme.py",
+        )
+        self.assertEqual(violations, [])
+
+    def test_ignores_type_checking_and_function_imports(self):
+        processor = """
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from .image_processing_acme import AcmeImageProcessorKwargs
+
+
+class AcmeProcessor(ProcessorMixin):
+    def _image_kwargs(self):
+        from .image_processing_acme import AcmeImageProcessorKwargs
+
+        return AcmeImageProcessorKwargs
+
+
+__all__ = ["AcmeProcessor"]
+"""
+        violations = self._run_in_model_dir(
+            {"image_processing_acme.py": TORCHVISION_IMAGE_PROCESSOR, "processing_acme.py": processor},
+            "processing_acme.py",
+        )
+        self.assertEqual(violations, [])
+
+    def test_modeling_file_may_import_torch_only_siblings(self):
+        modeling = "from .image_processing_acme import AcmeImageProcessorKwargs\n"
+        image_processor = "import torch\n\n\nclass AcmeImageProcessorKwargs:\n    pass\n"
+        violations = self._run_in_model_dir(
+            {"image_processing_acme.py": image_processor, "modeling_acme.py": modeling},
+            "modeling_acme.py",
+        )
+        self.assertEqual(violations, [])
+
+    def test_modular_file_reports_generated_processor(self):
+        generated = (
+            "#           This file was automatically generated from src/transformers/models/acme/modular_acme.py.\n"
+            + VISION_PROCESSOR.format(module="image_processing_acme")
+        )
+        modular = """
+from ..base.processing_base import BaseProcessor
+
+
+class AcmeProcessor(BaseProcessor):
+    pass
+"""
+        violations = self._run_in_model_dir(
+            {
+                "image_processing_acme.py": TORCHVISION_IMAGE_PROCESSOR,
+                "processing_acme.py": generated,
+                "modular_acme.py": modular,
+            },
+            "modular_acme.py",
+        )
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0].line_number, 5)
+        self.assertIn("generated processing_acme.py:9", violations[0].message)
 
-    def test_trf063_flags_chained_read_on_the_call(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values):
-        return self.vision_model(pixel_values, output_hidden_states=True).hidden_states[-2]
-"""
-        self.assertEqual(len(self._run(mlinter.TRF063, source)), 1)
-
-    def test_trf063_flags_modular_file_with_imported_base(self):
-        # The rule reads only the function's own body, so an imported base class changes nothing.
-        source = """
-from ..llava.modeling_llava import LlavaModel
-
-
-class FooModel(LlavaModel):
-    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, **kwargs)
-        return image_outputs.hidden_states[vision_feature_layer]
-"""
-        self.assertEqual(len(self._run(mlinter.TRF063, source, file_name="modular_foo.py")), 1)
-
-    def test_trf063_allows_hidden_states_to_capture(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
-        vision_feature_layer, kwargs["output_hidden_states"] = hidden_states_to_capture(
-            vision_feature_layer, self.config.vision_config, kwargs.get("output_hidden_states")
+    def test_suppression(self):
+        processor = VISION_PROCESSOR.format(module="image_processing_acme").replace(
+            "    from .image_processing_acme", "    # trf-ignore: TRF063\n    from .image_processing_acme"
         )
-        image_outputs = self.vision_tower(pixel_values, return_dict=True, **kwargs)
-        return image_outputs.hidden_states[vision_feature_layer]
-"""
-        self.assertEqual(self._run(mlinter.TRF063, source), [])
-
-    def test_trf063_allows_stacking_the_whole_tuple(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, input_values):
-        outputs = self.semantic_model(input_values, output_hidden_states=True)
-        hidden_states = outputs.hidden_states
-        stacked = torch.stack([h for h in hidden_states], dim=1)
-        return stacked.mean(dim=1), hidden_states[-1]
-"""
-        self.assertEqual(self._run(mlinter.TRF063, source), [])
-
-    def test_trf063_allows_slicing_or_passing_the_tuple_on(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, pixel_values):
-        outputs = self.encoder(pixel_values, output_hidden_states=True)
-        return self.decoder(outputs.hidden_states)
-
-    def other(self, pixel_values):
-        outputs = self.encoder(pixel_values, output_hidden_states=True)
-        return [h[0] for h in outputs.hidden_states[1:]]
-"""
-        self.assertEqual(self._run(mlinter.TRF063, source), [])
-
-    def test_trf063_allows_filter_output_hidden_states_backbones(self):
-        source = """
-class FooBackbone(FooPreTrainedModel, BackboneMixin):
-    @can_return_tuple
-    @filter_output_hidden_states
-    def forward(self, pixel_values):
-        outputs = self.foo(pixel_values, output_hidden_states=True, return_dict=True)
-        hidden_states = outputs.hidden_states
-        feature_maps = ()
-        for idx, stage in enumerate(self.stage_names):
-            if stage in self.out_features:
-                feature_maps += (hidden_states[idx],)
-        return BackboneOutput(feature_maps=feature_maps)
-"""
-        self.assertEqual(self._run(mlinter.TRF063, source), [])
-
-    def test_trf063_ignores_unrelated_hidden_states_local(self):
-        # `hidden_states` is assigned before the forced call and never aliases its output tuple.
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, pixel_values, **kwargs):
-        hidden_states = self.embeddings(pixel_values)
-        first = hidden_states[0]
-        kwargs["output_hidden_states"] = True
-        outputs = self.encoder(first, **kwargs)
-        return self.head(outputs.hidden_states)
-"""
-        self.assertEqual(self._run(mlinter.TRF063, source), [])
-
-    def test_trf063_ignores_kwargs_forced_after_the_call(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, pixel_values, **kwargs):
-        outputs = self.encoder(pixel_values, **kwargs)
-        kwargs["output_hidden_states"] = True
-        return outputs.hidden_states[-1]
-"""
-        self.assertEqual(self._run(mlinter.TRF063, source), [])
-
-    def test_trf063_ignores_configuration_files(self):
-        source = """
-def helper(model, x):
-    return model(x, output_hidden_states=True).hidden_states[-2]
-"""
-        self.assertEqual(self._run(mlinter.TRF063, source, file_name="configuration_foo.py"), [])
-
-    def test_trf063_suppression(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, **kwargs):
-        # trf-ignore: TRF063
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, **kwargs)
-        return image_outputs.hidden_states[-2]
-"""
-        self.assertEqual(self._run(mlinter.TRF063, source), [])
+        violations = self._run_in_model_dir(
+            {"image_processing_acme.py": TORCHVISION_IMAGE_PROCESSOR, "processing_acme.py": processor},
+            "processing_acme.py",
+        )
+        self.assertEqual(violations, [])

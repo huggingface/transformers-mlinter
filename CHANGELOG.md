@@ -24,14 +24,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `initialize_weights`, which a function imported by name escapes. Helpers that only compute a value, such as
   `calculate_gain`, are not flagged. Existing models were migrated in
   [huggingface/transformers#49573](https://github.com/huggingface/transformers/pull/49573).
-- `TRF063`: in `modeling_*.py` and `modular_*.py`, flags a sub-model call made with every
-  hidden state switched on (`output_hidden_states=True`, or `kwargs["output_hidden_states"] = True` before a
-  `**kwargs` call) when the same function only reads that call's `.hidden_states[...]` by index, as
-  `get_image_features` does with `vision_feature_layer`. Each forced capture keeps one activation per layer alive;
-  for Aria in vLLM it raised peak activation memory from 5.79 GiB to 14.91 GiB. The fix is
-  `hidden_states_to_capture`, which captures only the selected layers. Iterating, slicing or stacking the whole
-  tuple is exempt, as are `@filter_output_hidden_states` backbones. The helper and the fixes for every existing
-  model land in [huggingface/transformers#49594](https://github.com/huggingface/transformers/pull/49594).
+- `TRF063`: a model-local relative import that runs at module import time must not need backends beyond what the
+  importing file declares (its base requirements, the weakest `@requires` among its `__all__` objects, or an
+  enclosing `is_<backend>_available()` guard). Imports are followed through sibling files; a `modular_*.py` file is
+  checked through the files it generates. Catches a `@requires(backends=("vision",))` processor importing a
+  torchvision image processor, which breaks `from transformers import *` with Pillow but no torch, as in
+  [huggingface/transformers#49748](https://github.com/huggingface/transformers/pull/49748).
+- `TRF064`: `<Model>ProcessorKwargs` must not override `_defaults`, `text_kwargs`, `images_kwargs`,
+  `videos_kwargs` or `audio_kwargs`. Set defaults as class attributes of the processor instead, e.g.
+  `text_kwargs = {"padding": False}`. Checks `processing_*.py` and `modular_*.py` for both assignments and
+  re-annotations; narrowing a modality field to a `Deprecated<Model>...Kwargs` backward-compatibility shim is
+  exempt. `csm`, `dia`, `emu3`, `pocket_tts` and `voxtral` are allowlisted.
+- `TRF065`: processors must not subclass `ImagesKwargs`, `TextKwargs`, `AudioKwargs` or `VideosKwargs`. Declare
+  model-specific kwargs at the top level of `<Model>ProcessorKwargs`. Modular files also hold image, video and
+  audio processors, so there a subclass is accepted when named `<Model>ImageProcessorKwargs`,
+  `<Model>VideoProcessorKwargs`/`<Model>VideoProcessorInitKwargs` or `<Model>AudioProcessorKwargs`.
+  `Deprecated<Model>...Kwargs` shims are exempt. `csm`, `dia`, `pocket_tts` and `voxtral` are allowlisted.
+- `TRF066`: in `modeling_*.py` and `modular_*.py`, flags a sub-model call made with every hidden state switched
+  on (`output_hidden_states=True`, or `kwargs["output_hidden_states"] = True` before a `**kwargs` call) when the
+  same function only reads that call's `.hidden_states[...]` by index, as `get_image_features` does with
+  `vision_feature_layer`. Each forced capture keeps one activation per layer alive; for Aria in vLLM it raised peak
+  activation memory from 5.79 GiB to 14.91 GiB. The fix is `@select_hidden_states` on a method that forwards
+  `**kwargs`, or an index passed directly as `output_hidden_states=<index>`. Iterating, slicing or stacking the
+  whole tuple is exempt, as are `@filter_output_hidden_states` backbones. The decorator and the fixes for every
+  existing model land in
+  [huggingface/transformers#49594](https://github.com/huggingface/transformers/pull/49594).
 
 ### Changed
 
@@ -40,12 +57,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Console output prints a violation's location as `path:42:` instead of `path:L42:`, the `file:line` form
   editors and terminals turn into a link that jumps to the line. `--output-json` and `--github-annotations`
   are unchanged.
+- The lint cache now hashes every sibling file in the model directory, so editing an imported file re-checks its
+  importers.
 
 ### Improved
 
+- `TRF055` now enforces the whole `config` contract on `PreTrainedModel` classes: `config_class` is never
+  written by hand, every `<Model>PreTrainedModel` declares a `config: <Model>Config` annotation, and an
+  `__init__` taking `config` annotates it with the config the class declares or inherits. A mismatch means the
+  model is built from one config type but advertises another, as with `SamVisionEncoder`, which takes a
+  `SamVisionConfig` but reports `SamConfig`. A `modular_*.py` file is checked through the `modeling_*.py` files it
+  generates and the problem is reported on its own class. A class built from a sub-config
+  (`AcmeTextModel(config.text_config)`) must declare that sub-config, which catches a modular
+  `class AcmeTextModel(LlamaModel): pass` silently inheriting the composite config. Existing models are annotated in
+  [huggingface/transformers#50067](https://github.com/huggingface/transformers/pull/50067). Closes
+  [#88](https://github.com/huggingface/transformers-mlinter/issues/88).
 - `TRF057` now covers video processors: a `BaseVideoProcessor` subclass in `video_processing_*.py` (or the
   `modular_*.py` it is generated from) needs `@auto_docstring` on the class and on its `preprocess` method, as
   image processors already do.
+
+### Removed
+
+- Removed `TRF001`, which checked that `config_class` on `<Model>PreTrainedModel` was named `<Model>Config`.
+  `config_class` is no longer written by hand, and `TRF055` now flags it outright.
 
 ## [0.1.5] - 2026-08-28
 

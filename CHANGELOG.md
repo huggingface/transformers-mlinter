@@ -47,6 +47,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   audio processors, so there a subclass is accepted when named `<Model>ImageProcessorKwargs`,
   `<Model>VideoProcessorKwargs`/`<Model>VideoProcessorInitKwargs` or `<Model>AudioProcessorKwargs`.
   `Deprecated<Model>...Kwargs` shims are exempt. `csm`, `dia`, `pocket_tts` and `voxtral` are allowlisted.
+- `TRF067`: in `modeling_*.py` and `modular_*.py`, flags a sub-model call made with every hidden state switched
+  on (`output_hidden_states=True`, or `kwargs["output_hidden_states"] = True` before a `**kwargs` call) when the
+  same function only reads that call's `.hidden_states[...]` by index, as `get_image_features` does with
+  `vision_feature_layer`. Each forced capture keeps one activation per layer alive; for Aria in vLLM it raised peak
+  activation memory from 5.79 GiB to 14.91 GiB. The fix is `@select_hidden_states` on a method that forwards
+  `**kwargs`, or an index passed directly as `output_hidden_states=<index>`. Code that needs the whole tuple
+  (iterating, slicing or stacking it, or handing it on in an output) is exempt, as are
+  `@filter_output_hidden_states` backbones. The decorator and the fixes for every
+  existing model land in
+  [huggingface/transformers#49594](https://github.com/huggingface/transformers/pull/49594).
 
 ### Changed
 

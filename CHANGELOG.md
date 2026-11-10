@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   replaced with a `@requires` decorator; conditional requirements keep using `requires_backends`.
   Models contributed before the `2026-10-29` cutoff are exempt. Existing undated directories
   `auto`, `timm_backbone`, `timm_wrapper` and `wav2vec2_with_lm` are allowlisted.
+  It also flags a `@requires` placed above `@classmethod` or `@staticmethod`, which makes every call raise
+  `TypeError`; that check ignores the cutoff.
 - `TRF060`: files in a model directory must import from transformers with relative imports
   (`from ...modeling_utils import X`), not `from transformers.modeling_utils import X` or
   `import transformers...`. Tests, `convert_*.py` scripts and files outside a transformers checkout are skipped;

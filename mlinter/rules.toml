@@ -1187,7 +1187,7 @@ diff = '''
 [rules.TRF067]
 description = "`_no_split_modules` must only list classes that exist in the (generated) modeling file."
 default_enabled = true
-allowlist_models = []
+allowlist_models = ["esm"]
 
 [rules.TRF067.explanation]
 what_it_does = """

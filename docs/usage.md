@@ -101,7 +101,7 @@ active fails with exit code 2 and names the rule, rather than silently linting n
 
 ```bash
 # Show detailed documentation for one rule
-mlinter --rule TRF001
+mlinter --rule TRF002
 ```
 
 This prints the same "what it does", "why is this bad", and diff example that the
@@ -172,7 +172,7 @@ Disable the cache with `--no-cache`.
 Import the supported API from the package root:
 
 ```python
-from mlinter import TRF001, analyze_file, model_dir_name, render_rules_reference
+from mlinter import TRF002, analyze_file, model_dir_name, render_rules_reference
 ```
 
 File discovery is part of that API, so a tool that lints a repository of its own does not have to

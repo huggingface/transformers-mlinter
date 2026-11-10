@@ -85,7 +85,7 @@ mlinter
 mlinter --changed-only --base-ref origin/main
 
 # Explain one rule
-mlinter --rule TRF001
+mlinter --rule TRF002
 ```
 
 See [CLI usage](usage.md) for the full set of flags, the Python API, and cache locations.

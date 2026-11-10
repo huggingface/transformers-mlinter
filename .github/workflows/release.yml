@@ -35,7 +35,7 @@ jobs:
 
       - run: mlinter --version
       - run: cd /tmp && python -m mlinter --version
-      - run: cd /tmp && python -c "import mlinter; assert mlinter.__version__; assert 'TRF001' in mlinter.TRF_RULES"
+      - run: cd /tmp && python -c "import mlinter; assert mlinter.__version__; assert 'TRF002' in mlinter.TRF_RULES"
 
       - run: python -m twine check --strict dist/*
 

@@ -383,3 +383,16 @@ class FooModel(FooPreTrainedModel):
         return outputs.hidden_states[-2]
 """
         self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_ignores_reads_in_a_nested_function(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+
+        def pick(outputs):
+            return outputs.hidden_states[-2]
+
+        return pick(outputs)
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])

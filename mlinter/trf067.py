@@ -38,14 +38,17 @@ EXITS = (ast.Return, ast.Raise, ast.Break, ast.Continue)
 CONTAINERS = (ast.Tuple, ast.List, ast.Set, ast.Dict, ast.keyword, ast.Return, ast.Yield, ast.Starred)
 
 
+SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
 def _own_nodes(function_node: FunctionNode) -> Iterator[ast.AST]:
     """Every node in the function body, without descending into nested functions, lambdas or classes."""
-    stack: list[ast.AST] = list(function_node.body)
+    stack: list[ast.AST] = [node for node in function_node.body if not isinstance(node, SCOPES)]
     while stack:
         node = stack.pop()
         yield node
         for child in ast.iter_child_nodes(node):
-            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            if not isinstance(child, SCOPES):
                 stack.append(child)
 
 

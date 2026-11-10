@@ -9,93 +9,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- `TRF060`: files in a model directory must import from transformers with relative imports
-  (`from ...modeling_utils import X`), not `from transformers.modeling_utils import X` or
-  `import transformers...`. Tests, `convert_*.py` scripts and files outside a transformers checkout are skipped;
-  models added before the `2026-06-20` cutoff are exempt.
-- `TRF061`: flags a class in a `modular_*.py` file that subclasses another class defined in the same file. The
-  modular converter writes out bases imported from another model in full but keeps a same-file base as it is, so
-  the generated modeling file inherits from a sibling class and can no longer be read one class at a time.
-  `<Model>PreTrainedModel` subclasses and backward-compatibility aliases are exempt; models added before
-  2026-06-20 are exempt.
-- `TRF062`: `_init_weights` must initialize tensors with the transformers `initialization` module
-  (`from ... import initialization as init`), not `torch.nn.init`. The transformers functions skip a tensor
-  already loaded from a checkpoint; `torch.nn.init` is only guarded by a patch applied during
-  `initialize_weights`, which a function imported by name escapes. Helpers that only compute a value, such as
-  `calculate_gain`, are not flagged. Existing models were migrated in
-  [huggingface/transformers#49573](https://github.com/huggingface/transformers/pull/49573).
-- `TRF063`: a model-local relative import that runs at module import time must not need backends beyond what the
-  importing file declares (its base requirements, the weakest `@requires` among its `__all__` objects, or an
-  enclosing `is_<backend>_available()` guard). Imports are followed through sibling files; a `modular_*.py` file is
-  checked through the files it generates. Catches a `@requires(backends=("vision",))` processor importing a
-  torchvision image processor, which breaks `from transformers import *` with Pillow but no torch, as in
-  [huggingface/transformers#49748](https://github.com/huggingface/transformers/pull/49748).
-- `TRF064`: `<Model>ProcessorKwargs` must not override `_defaults`, `text_kwargs`, `images_kwargs`,
-  `videos_kwargs` or `audio_kwargs`. Set defaults as class attributes of the processor instead, e.g.
-  `text_kwargs = {"padding": False}`. Checks `processing_*.py` and `modular_*.py` for both assignments and
-  re-annotations; narrowing a modality field to a `Deprecated<Model>...Kwargs` backward-compatibility shim is
-  exempt. `csm`, `dia`, `emu3`, `pocket_tts` and `voxtral` are allowlisted.
-- `TRF065`: processors must not subclass `ImagesKwargs`, `TextKwargs`, `AudioKwargs` or `VideosKwargs`. Declare
-  model-specific kwargs at the top level of `<Model>ProcessorKwargs`. Modular files also hold image, video and
-  audio processors, so there a subclass is accepted when named `<Model>ImageProcessorKwargs`,
-  `<Model>VideoProcessorKwargs`/`<Model>VideoProcessorInitKwargs` or `<Model>AudioProcessorKwargs`.
-  `Deprecated<Model>...Kwargs` shims are exempt. `csm`, `dia`, `pocket_tts` and `voxtral` are allowlisted.
-- `TRF066`: flags backends in `@requires` that repeat the file's implicit requirements or a method's
-  enclosing class requirements. Also flags unconditional `requires_backends(...)` checks that can be
-  replaced with a `@requires` decorator; conditional requirements keep using `requires_backends`.
-  Models contributed before the `2026-10-29` cutoff are exempt. Existing undated directories
-  `auto`, `timm_backbone`, `timm_wrapper` and `wav2vec2_with_lm` are allowlisted.
-  It also flags a `@requires` placed above `@classmethod` or `@staticmethod`, which makes every call raise
-  `TypeError`; that check ignores the cutoff.
-- `TRF067`: in `modeling_*.py` and `modular_*.py`, flags a sub-model call made with every hidden state switched
-  on (`output_hidden_states=True`, or `kwargs["output_hidden_states"] = True` before a `**kwargs` call) when the
-  same function only reads that call's `.hidden_states[...]` by index, as `get_image_features` does with
-  `vision_feature_layer`. Each forced capture keeps one activation per layer alive; for Aria in vLLM it raised peak
-  activation memory from 5.79 GiB to 14.91 GiB. The fix is `@select_hidden_states` on a method that forwards
-  `**kwargs`, or an index passed directly as `output_hidden_states=<index>`. Code that needs the whole tuple
-  (iterating, slicing or stacking it, or handing it on in an output) is exempt, as are
-  `@filter_output_hidden_states` backbones. The decorator and the fixes for every
-  existing model land in
-  [huggingface/transformers#49594](https://github.com/huggingface/transformers/pull/49594).
-- `TRF068`: `_no_split_modules` must only list classes that exist. accelerate matches the names against the
-  class names of the model's submodules, so a name that is not a class never matches and the layer it meant to
-  keep whole can be split across devices. This happens in modular files when `_no_split_modules` is inherited
-  from another model: the converter renames the prefix, not the class (`Qwen4ExpDecoderLayer` for the real
-  `Qwen4ExpTextDecoderLayer`). `modeling_*.py` files are checked directly; a `modular_*.py` file is checked
-  through the files it generates on disk (regenerate before linting), with violations reported on the modular
-  class, or on the line that names a class the converter copied in. Names built by `torch.nn.utils.parametrize`
-  are skipped, and `esm` is allowlisted.
+- `TRF060`: model files import from transformers with relative imports.
+- `TRF061`: a modular class must not subclass another class from the same modular file.
+- `TRF062`: `_init_weights` uses the transformers `initialization` module, not `torch.nn.init`.
+- `TRF063`: model-local imports must not need backends the importing file does not declare.
+- `TRF064`: `<Model>ProcessorKwargs` must not override `_defaults` or the modality kwargs.
+- `TRF065`: processors must not subclass `ImagesKwargs`, `TextKwargs`, `AudioKwargs` or `VideosKwargs`.
+- `TRF066`: `@requires` for unconditional backend checks, without repeated backends, and never above
+  `@classmethod`/`@staticmethod`.
+- `TRF067`: don't capture every hidden state to read only some of them by index.
+- `TRF068`: `_no_split_modules` must only list classes that exist.
 
 ### Changed
 
-- Python 3.11 is now the minimum supported version. The `tomli` dependency is gone: `tomllib` from the
-  standard library is used directly.
-- Console output prints a violation's location as `path:42:` instead of `path:L42:`, the `file:line` form
-  editors and terminals turn into a link that jumps to the line. `--output-json` and `--github-annotations`
-  are unchanged.
-- The lint cache now hashes every sibling file in the model directory, so editing an imported file re-checks its
-  importers.
+- Python 3.11 is the minimum supported version; `tomli` is no longer a dependency.
+- Violations print as `path:42:` instead of `path:L42:`.
+- The lint cache hashes every file in the model directory, so editing an imported file re-checks its importers.
 
 ### Improved
 
-- `TRF055` now enforces the whole `config` contract on `PreTrainedModel` classes: `config_class` is never
-  written by hand, every `<Model>PreTrainedModel` declares a `config: <Model>Config` annotation, and an
-  `__init__` taking `config` annotates it with the config the class declares or inherits. A mismatch means the
-  model is built from one config type but advertises another, as with `SamVisionEncoder`, which takes a
-  `SamVisionConfig` but reports `SamConfig`. A `modular_*.py` file is checked through the `modeling_*.py` files it
-  generates and the problem is reported on its own class. A class built from a sub-config
-  (`AcmeTextModel(config.text_config)`) must declare that sub-config, which catches a modular
-  `class AcmeTextModel(LlamaModel): pass` silently inheriting the composite config. Existing models are annotated in
-  [huggingface/transformers#50067](https://github.com/huggingface/transformers/pull/50067). Closes
-  [#88](https://github.com/huggingface/transformers-mlinter/issues/88).
-- `TRF057` now covers video processors: a `BaseVideoProcessor` subclass in `video_processing_*.py` (or the
-  `modular_*.py` it is generated from) needs `@auto_docstring` on the class and on its `preprocess` method, as
-  image processors already do.
+- `TRF055` enforces the whole `config` contract: no `config_class`, a `config` annotation on every
+  `<Model>PreTrainedModel`, a matching `__init__` annotation, and sub-configs declared by the models built from
+  them ([#88](https://github.com/huggingface/transformers-mlinter/issues/88)).
+- `TRF057` also covers video processors.
 
 ### Removed
 
-- Removed `TRF001`, which checked that `config_class` on `<Model>PreTrainedModel` was named `<Model>Config`.
-  `config_class` is no longer written by hand, and `TRF055` now flags it outright.
+- `TRF001`, now covered by `TRF055`.
 
 ## [0.1.5] - 2026-08-28
 

@@ -1160,11 +1160,36 @@ diff = '''
 
 
 [rules.TRF066]
+description = "Use `@requires` for unconditional backend checks and declare only requirements additional to the file or class."
+default_enabled = true
+# No contribution date is available for these existing model directories.
+allowlist_models = ["auto", "timm_backbone", "timm_wrapper", "wav2vec2_with_lm"]
+cutoff_date = "2026-10-29"
+
+[rules.TRF066.explanation]
+what_it_does = "Flags backends in `@requires` that repeat the file's implicit requirements or, for a method, its enclosing class's explicit requirements. Also flags `requires_backends(...)` if it could be written as a `@requires` decorator instead, and a `@requires` placed above `@classmethod` or `@staticmethod`. The cutoff exempts older models from everything except the misplaced decorator."
+why_bad = "Repeating backend requirements obscures which dependencies a method actually adds. An unconditional check at the start of a function belongs in `@requires(backends=...)`, which exposes dependency metadata and performs the check when the function is called. Keep `requires_backends` for conditional requirements. `@requires` wraps a plain function, so above `@classmethod` or `@staticmethod` it wraps the descriptor instead and every call raises `TypeError`: it must sit below them."
+diff = '''
+ # image_processing_pil_acme.py already requires vision.
+-@requires(backends=("vision", "torch"))
++@requires(backends=("torch",))
+ class AcmeImageProcessorPil(PilBackend):
+-    @requires(backends=("torch",))
+     def post_process(self, outputs):
+         return outputs
+
++    @requires(backends=("scipy",))
+     def refine(self, outputs):
+-        requires_backends(self, ["scipy"])
+         return outputs
+'''
+
+[rules.TRF067]
 description = "`_no_split_modules` must only list classes that exist in the (generated) modeling file."
 default_enabled = true
 allowlist_models = []
  
-[rules.TRF066.explanation]
+[rules.TRF067.explanation]
 what_it_does = """
 Checks every `_no_split_modules` assignment against the classes the modeling file defines or imports. \
 `modeling_*.py` files are checked directly. `modular_*.py` files are checked through the `modeling_*.py` \
@@ -1174,8 +1199,8 @@ accelerate matches `_no_split_modules` against the class names of the model's su
 not a class never matches, so the layer is silently split across devices. In modular files this happens \
 when `_no_split_modules` is inherited from another model: the converter renames the prefix but not the \
 class (`Qwen4ExpDecoderLayer` vs. the real `Qwen4ExpTextDecoderLayer`)."""
-diff = """
+diff = '''
  class Qwen4ExpModel(Qwen3_5MoeModel):
 -    # inherits ["Qwen3_5MoeDecoderLayer"] -> converted to "Qwen4ExpDecoderLayer", which does not exist
 +    _no_split_modules = ["Qwen4ExpTextDecoderLayer"]
-"""
+'''

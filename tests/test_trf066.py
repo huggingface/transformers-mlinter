@@ -11,193 +11,315 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import tempfile
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+from pathlib import Path
+
+from mlinter import trf066
+from tests.rule_test_utils import RuleTestCase, _helpers_mod, date, mlinter, patch, tempfile
 
 
 class TRF066Test(RuleTestCase):
-    # --- trf066: `_no_split_modules` must only list classes that exist ---
+    def check(self, source, file_name="processing_foo.py"):
+        return self._run(mlinter.TRF066, source, file_name=file_name)
 
-    def _trf066(self, source: str, file_name: str = "modeling_foo.py") -> list:
-        file_path = Path(f"src/transformers/models/foo/{file_name}")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF066})
-        return [v for v in violations if v.rule_id == mlinter.TRF066]
-
-    def _trf066_modular(self, modular_source: str, generated_source: str | None, generated_name="modeling_foo.py"):
-        # Modular files are checked through the modeling file they generate, which is read from disk.
-        with tempfile.TemporaryDirectory() as tmp:
-            if generated_source is not None:
-                (Path(tmp) / generated_name).write_text(generated_source, encoding="utf-8")
-            violations = mlinter.analyze_file(
-                Path(tmp) / "modular_foo.py", modular_source, enabled_rules={mlinter.TRF066}
-            )
-        return [v for v in violations if v.rule_id == mlinter.TRF066]
-
-    GENERATED_HEADER = "# This file was automatically generated from src/transformers/models/foo/modular_foo.py.\n"
-
-    def test_trf066_flags_missing_class(self):
+    def test_class_and_method_overlap(self):
         source = """
-class FooTextDecoderLayer(nn.Module):
-    pass
-
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooDecoderLayer"]
+@requires(backends=("torch",))
+class Processor:
+    @requires(backends=("torch", "scipy"))
+    def process(self):
+        pass
+    @requires(backends=["torch"])
+    def other(self):
+        pass
 """
-        trf066 = self._trf066(source)
-        self.assertEqual(len(trf066), 1)
-        self.assertIn("FooPreTrainedModel", trf066[0].message)
-        self.assertIn("`FooDecoderLayer`", trf066[0].message)
-        self.assertIn("FooTextDecoderLayer", trf066[0].message)  # suggestion
+        violations = self.check(source)
+        self.assertEqual([v.line_number for v in violations], [4, 7])
+        self.assertIn("Remove `torch` from `@requires(backends=...)`.", violations[0].message)
+        self.assertIn("Remove this `@requires(backends=...)` decorator.", violations[1].message)
 
-    def test_trf066_flags_each_missing_class(self):
-        source = """
-class FooLayer(nn.Module):
-    pass
+    def test_additional_method_requirements(self):
+        self.assertEqual(
+            self.check("""
+@requires(backends=("torch",))
+class Processor:
+    @requires(backends=("scipy",))
+    def process(self):
+        pass
+"""),
+            [],
+        )
 
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooLayer", "MissingA", "MissingB"]
-"""
-        self.assertEqual(len(self._trf066(source)), 2)
+    def test_file_requirements(self):
+        for file_name, backend, base in (
+            ("modeling_foo.py", "torch", "object"),
+            ("generation_foo.py", "torch", "object"),
+            ("image_processing_pil_foo.py", "vision", "PilBackend"),
+            ("image_processing_foo.py", "torchvision", "TorchvisionBackend"),
+            ("video_processing_foo.py", "torch", "BaseVideoProcessor"),
+            ("tokenization_foo_fast.py", "tokenizers", "object"),
+        ):
+            with self.subTest(file_name=file_name):
+                self.assertEqual(
+                    len(self.check(f'@requires(backends=("{backend}",))\nclass Foo({base}): pass', file_name)), 1
+                )
 
-    def test_trf066_flags_annotated_assignment(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules: list[str] = ["Missing"]
-"""
-        self.assertEqual(len(self._trf066(source)), 1)
+    def test_no_inferred_modular_or_pil_torch_requirements(self):
+        source = '@requires(backends=("torch",))\nclass Foo(ImportedProcessor): pass'
+        for filename in ("modular_foo.py", "image_processing_pil_foo.py", "processing_foo.py"):
+            with self.subTest(filename=filename):
+                self.assertEqual(self.check(source, filename), [])
 
-    def test_trf066_allows_existing_classes(self):
-        source = """
-class FooDecoderLayer(nn.Module):
-    pass
+    def test_leading_call_after_docstring(self):
+        violations = self.check('''
+def process(outputs):
+    """Process outputs."""
+    # A comment is not an operation.
+    requires_backends(process, ["torch"])
+    return outputs
+''')
+        self.assertEqual([v.line_number for v in violations], [5])
+        self.assertIn("Remove it and use a `@requires(backends=...)` decorator instead.", violations[0].message)
 
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooDecoderLayer"]
-"""
-        self.assertEqual(self._trf066(source), [])
+    def test_leading_call_after_empty_docstring(self):
+        source = 'def process():\n    ""\n    requires_backends(process, "torch")'
+        self.assertEqual(len(self.check(source)), 1)
 
-    def test_trf066_allows_imported_classes(self):
-        source = """
-from ..clip.modeling_clip import CLIPEncoderLayer
+    def test_leading_calls(self):
+        for call in (
+            'requires_backends(self, "torch")',
+            'requires_backends(self, ("torch", "scipy"))',
+            'requires_backends(self, backends=["torch"])',
+            'requires_backends(obj=self, backends=["torch"])',
+        ):
+            with self.subTest(call=call):
+                self.assertEqual(len(self.check(f"class Foo:\n    async def process(self):\n        {call}")), 1)
 
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["CLIPEncoderLayer"]
-"""
-        self.assertEqual(self._trf066(source), [])
+    def test_conditional_later_and_dynamic_calls(self):
+        for body in (
+            'if outputs is None:\n        requires_backends(process, "torch")',
+            'outputs = None\n    requires_backends(process, "torch")',
+            "requires_backends(process, backends)",
+            "requires_backends(process, [backend])",
+            "requires_backends(process, outputs.backends)",
+            'other.requires_backends(process, "torch")',
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self.check(f"def process(outputs):\n    {body}"), [])
 
-    def test_trf066_allows_torch_parametrized_classes(self):
-        # torch.nn.utils.parametrize creates `Parametrized<Name>` classes at runtime.
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["ParametrizedConv1d"]
-"""
-        self.assertEqual(self._trf066(source), [])
+    def test_version_constraints_are_not_discarded(self):
+        self.assertEqual(
+            self.check(
+                """
+@requires(backends=("torch>=2.5",))
+class Processor:
+    @requires(backends=("torch>=2.6",))
+    def process(self): pass
+""",
+                "modeling_foo.py",
+            ),
+            [],
+        )
+        self.assertEqual(
+            len(
+                self.check("""
+@requires(backends=("torch>=2.5",))
+class Processor:
+    @requires(backends=("torch>=2.5",))
+    def process(self): pass
+""")
+            ),
+            1,
+        )
 
-    def test_trf066_skips_non_literal_values(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooLayer"]
+    def test_dynamic_decorators(self):
+        self.assertEqual(
+            self.check("""
+@requires(backends=BACKENDS)
+class Foo:
+    @requires(backends=("torch",))
+    def process(self): pass
+@requires(backends=("torch", *EXTRA))
+def process(): pass
+"""),
+            [],
+        )
 
-class FooModel(FooPreTrainedModel):
-    _no_split_modules = FooPreTrainedModel._no_split_modules
-"""
-        # FooLayer is missing in FooPreTrainedModel, but FooModel's non-literal value is not reported again.
-        self.assertEqual(len(self._trf066(source)), 1)
+    def test_nested_scopes_do_not_inherit_class_requirements(self):
+        self.assertEqual(
+            self.check("""
+@requires(backends=("torch",))
+class Outer:
+    @requires(backends=("torch",))
+    class Inner:
+        pass
+    def process(self):
+        @requires(backends=("torch",))
+        def nested(): pass
+@requires(backends=("torch",))
+def unrelated(): pass
+"""),
+            [],
+        )
 
-    def test_trf066_allows_none_declaration(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = None
-"""
-        self.assertEqual(self._trf066(source), [])
+    def test_import_aliases(self):
+        self.assertEqual(
+            len(
+                self.check("""
+from ...utils.import_utils import requires as needs, requires_backends as check_backends
+@needs(backends=("torch",))
+class Foo:
+    @needs(backends=("torch",))
+    def process(self):
+        check_backends(self, "scipy")
+""")
+            ),
+            2,
+        )
+        self.assertEqual(
+            len(
+                self.check(
+                    """
+import transformers.utils.import_utils as iu
+@iu.requires(backends=("torch",))
+def process():
+    iu.requires_backends(process, "scipy")
+""",
+                    "modeling_foo.py",
+                )
+            ),
+            2,
+        )
 
-    def test_trf066_skips_non_modeling_files(self):
-        source = """
-class FooConfig(PreTrainedConfig):
-    _no_split_modules = ["Missing"]
-"""
-        self.assertEqual(self._trf066(source, file_name="configuration_foo.py"), [])
-
-    def test_trf066_respects_suppression_comment(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
+    def test_suppressions(self):
+        self.assertEqual(
+            self.check("""
+@requires(backends=("torch",))
+class Foo:
     # trf-ignore: TRF066
-    _no_split_modules = ["TimmWrapperForImageClassification"]
-"""
-        self.assertEqual(self._trf066(source), [])
-
-    def test_trf066_modular_checks_generated_file(self):
-        # The modular class inherits `_no_split_modules`; the converter renames the prefix to a class that
-        # does not exist in the generated file.
-        modular = """
-class FooTextDecoderLayer(BarDecoderLayer):
-    pass
-
-class FooModel(BarModel):
-    pass
-"""
-        generated = (
-            self.GENERATED_HEADER
-            + """
-class FooTextDecoderLayer(nn.Module):
-    pass
-
-class FooModel(FooPreTrainedModel):
-    _no_split_modules = ["FooDecoderLayer"]
-"""
+    @requires(backends=("torch",))
+    def process(self):
+        requires_backends(self, "scipy")  # trf-ignore: TRF066
+"""),
+            [],
         )
-        trf066 = self._trf066_modular(modular, generated)
-        self.assertEqual(len(trf066), 1)
-        self.assertIn("FooModel", trf066[0].message)
-        self.assertIn("`FooDecoderLayer`", trf066[0].message)
-        self.assertIn("FooTextDecoderLayer", trf066[0].message)
 
-    def test_trf066_modular_allows_valid_generated_file(self):
-        modular = """
-class FooModel(BarModel):
-    pass
-"""
-        generated = (
-            self.GENERATED_HEADER
-            + """
-class FooTextDecoderLayer(nn.Module):
-    pass
+    def test_checks_any_supplied_file(self):
+        source = 'def process():\n    requires_backends(process, "torch")'
+        for filename in ("convert_foo.py", "test_modeling_foo.py", "utils.py"):
+            with self.subTest(filename=filename):
+                self.assertEqual(len(self.check(source, filename)), 1)
 
-class FooModel(FooPreTrainedModel):
-    _no_split_modules = ["FooTextDecoderLayer"]
-"""
-        )
-        self.assertEqual(self._trf066_modular(modular, generated), [])
+    def test_empty_backend_list(self):
+        self.assertEqual(len(self.check("@requires(backends=())\ndef process(): pass")), 1)
 
-    def test_trf066_modular_reports_on_modular_class_so_it_can_be_suppressed(self):
-        modular = """
-class FooModel(BarModel):  # trf-ignore: TRF066
-    pass
-"""
-        generated = (
-            self.GENERATED_HEADER
-            + """
-class FooModel(FooPreTrainedModel):  # trf-ignore: TRF066
-    _no_split_modules = ["Missing"]
-"""
-        )
-        self.assertEqual(self._trf066_modular(modular, generated), [])
+    def test_cutoff_exempts_older_models(self):
+        source = '@requires(backends=("torch",))\ndef process():\n    requires_backends(process, "scipy")'
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2026, 10, 28)):
+            with patch.object(trf066, "CUTOFF_DATE", "2026-10-29"):
+                self.assertEqual(self.check(source, "modeling_foo.py"), [])
 
-    def test_trf066_modular_without_generated_file_is_skipped(self):
-        modular = """
-class FooModel(BarModel):
-    pass
-"""
-        self.assertEqual(self._trf066_modular(modular, None), [])
+    def test_cutoff_checks_new_and_undated_models(self):
+        source = '@requires(backends=("torch",))\ndef process():\n    requires_backends(process, "scipy")'
+        for contribution in (date(2026, 10, 29), date(2026, 10, 30), None):
+            with self.subTest(contribution=contribution):
+                with patch.object(_helpers_mod, "model_contribution_date", return_value=contribution):
+                    with patch.object(trf066, "CUTOFF_DATE", "2026-10-29"):
+                        self.assertEqual(len(self.check(source, "modeling_foo.py")), 2)
 
-    def test_trf066_modular_ignores_files_generated_from_another_modular(self):
-        modular = """
-class FooModel(BarModel):
-    pass
+    def test_empty_cutoff_checks_older_models(self):
+        source = '@requires(backends=("torch",))\ndef process(): pass'
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2020, 1, 1)):
+            with patch.object(trf066, "CUTOFF_DATE", ""):
+                self.assertEqual(len(self.check(source, "modeling_foo.py")), 1)
+
+    def test_modular_uses_each_generated_files_requirements(self):
+        source = """from ..detr.image_processing_pil_detr import DetrImageProcessorPil
+@requires(backends=("vision",))
+class FooImageProcessorPil(DetrImageProcessorPil):
+    @requires(backends=("vision",))
+    def process(self): pass
+@requires(backends=("vision",))
+class FooModel(ImportedModel): pass
 """
-        generated = """# This file was automatically generated from src/transformers/models/foo/modular_other.py.
-class FooModel(FooPreTrainedModel):
-    _no_split_modules = ["Missing"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            modular = root / "modular_foo.py"
+            header = f"# {_helpers_mod.GENERATED_FILE_MARKER} {modular.name}.\n"
+            (root / "image_processing_pil_foo.py").write_text(header + "class FooImageProcessorPil(PilBackend): pass")
+            (root / "modeling_foo.py").write_text(header + "class FooModel(PreTrainedModel): pass")
+            findings = mlinter.analyze_file(modular, source, enabled_rules={mlinter.TRF066})
+        self.assertEqual([v.line_number for v in findings], [2, 4])
+
+    def test_modular_ignores_unrelated_or_invalid_companions(self):
+        source = '@requires(backends=("vision",))\nclass Foo(ImportedProcessor): pass'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            modular = root / "modular_foo.py"
+            header = f"# {_helpers_mod.GENERATED_FILE_MARKER} {modular.name}.\n"
+            (root / "image_processing_foo.py").write_text("class Foo(TorchvisionBackend): pass")
+            (root / "image_processing_pil_foo.py").write_text(header + "class Foo(")
+            self.assertEqual(mlinter.analyze_file(modular, source, enabled_rules={mlinter.TRF066}), [])
+
+    def test_modular_shared_helper_uses_common_requirements(self):
+        source = '@requires(backends=("vision",))\ndef helper(): pass'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            modular = root / "modular_foo.py"
+            header = f"# {_helpers_mod.GENERATED_FILE_MARKER} {modular.name}.\n"
+            for name in ("image_processing_pil_foo.py", "modeling_foo.py"):
+                (root / name).write_text(header + "def helper(): pass")
+            self.assertEqual(mlinter.analyze_file(modular, source, enabled_rules={mlinter.TRF066}), [])
+
+    def test_requires_above_descriptor(self):
+        source = """
+class Processor:
+    @requires(backends=("scipy",))
+    @classmethod
+    def from_pretrained(cls):
+        pass
+
+    @requires(backends=("scipy",))
+    @staticmethod
+    def helper():
+        pass
+
+    @classmethod
+    @requires(backends=("scipy",))
+    def fine(cls):
+        pass
+
+    @staticmethod
+    @requires(backends=("scipy",))
+    def also_fine():
+        pass
 """
-        self.assertEqual(self._trf066_modular(modular, generated), [])
+        violations = self.check(source)
+        self.assertEqual([v.line_number for v in violations], [3, 8])
+        self.assertIn("sits above `@classmethod` on `from_pretrained`", violations[0].message)
+        self.assertIn("Move it below `@staticmethod`.", violations[1].message)
+
+    def test_requires_above_descriptor_ignores_cutoff(self):
+        source = """
+class Processor:
+    @requires(backends=("torch",))
+    @classmethod
+    def from_pretrained(cls):
+        requires_backends(cls, "scipy")
+"""
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2020, 1, 1)):
+            with patch.object(trf066, "CUTOFF_DATE", "2026-10-29"):
+                violations = self.check(source, "modeling_foo.py")
+        # Only the crash is reported: the redundant `torch` and the leading call are exempt by the cutoff.
+        self.assertEqual([v.line_number for v in violations], [3])
+        self.assertIn("raises `TypeError`", violations[0].message)
+
+    def test_leading_call_in_descriptor_says_where_the_decorator_goes(self):
+        source = """
+class Processor:
+    @classmethod
+    def from_pretrained(cls):
+        requires_backends(cls, ["timm"])
+"""
+        (violation,) = self.check(source)
+        self.assertTrue(violation.message.endswith("decorator instead, placed below `@classmethod`."))

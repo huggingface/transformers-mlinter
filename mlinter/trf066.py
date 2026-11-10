@@ -12,133 +12,187 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""TRF066: declare backend requirements with non-redundant @requires decorators."""
+
 import ast
-import difflib
 from pathlib import Path
 
-from ._helpers import Violation, _has_rule_suppression
-
-
-"""`PreTrainedModel._no_split_modules` must only name classes that exist."""
+from ._helpers import GENERATED_FILE_MARKER, Violation, _has_rule_suppression, is_exempt_by_cutoff, read_file_head
 
 
 RULE_ID = ""  # Set by discovery
-
-GENERATED_MARKER = "automatically generated from"
-# torch.nn.utils.parametrize builds classes named "Parametrized" + <original name> at runtime,
-# so they can never be found in a source file. Check `hubert` in transformers source code for an ex
-RUNTIME_CLASS_PREFIXES = ("Parametrized",)
-
-
-def _known_names(tree: ast.AST) -> set[str]:
-    """Class names defined anywhere in the file, plus every imported / aliased top-level name."""
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            names.add(node.name)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            names.update((a.asname or a.name).split(".")[0] for a in node.names)
-    for node in getattr(tree, "body", []):
-        if isinstance(node, ast.Assign):
-            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
-    return names
+CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
+_DEFINITIONS = (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+# `@requires` returns a plain function wrapper, so it must wrap the function before these turn it into a descriptor.
+_DESCRIPTORS = ("classmethod", "staticmethod")
 
 
-def _literal_names(value: ast.AST) -> list[str] | None:
-    """Strings of a literal list/tuple/set, or None when the value cannot be read statically."""
-    if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
-        if all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in value.elts):
-            return [e.value for e in value.elts]
+def _base_requirements(tree: ast.Module, file_path: Path) -> set[str]:
+    """Static mirror of transformers.utils.import_utils.BASE_FILE_REQUIREMENTS."""
+    name = file_path.stem
+    if name.startswith(("modeling_", "generation_")):
+        return {"torch"}
+    if name.startswith("tokenization_") and name.endswith("_fast"):
+        return {"tokenizers"}
+    if name.startswith("video_processing_"):
+        return {"vision", "torch", "torchvision"}
+    if name.startswith("image_processing_"):
+        if any(
+            isinstance(node, ast.ClassDef)
+            and any(isinstance(base, ast.Name) and base.id == "TorchvisionBackend" for base in node.bases)
+            for node in tree.body
+        ):
+            return {"vision", "torch", "torchvision"}
+        return {"vision"}
+    return set()
+
+
+def _generated_requirements(file_path: Path) -> dict[str, set[str]]:
+    """Match modular definitions to the file requirements of their generated companions."""
+    requirements: dict[str, set[str]] = {}
+    if not file_path.name.startswith("modular_"):
+        return requirements
+    for sibling in file_path.parent.glob("*.py"):
+        head = read_file_head(sibling)
+        if head is None or GENERATED_FILE_MARKER not in head or file_path.name not in head:
+            continue
+        try:
+            tree = ast.parse(sibling.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        backends = _base_requirements(tree, sibling)
+        for node in tree.body:
+            if isinstance(node, _DEFINITIONS):
+                # A helper may appear in several generated files: only their common requirements are certain.
+                requirements[node.name] = requirements.get(node.name, backends) & backends
+    return requirements
+
+
+def _strings(node: ast.AST) -> set[str] | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, (ast.Tuple, ast.List)):
+        values = set()
+        for item in node.elts:
+            if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+                return None
+            values.add(item.value)
+        return values
     return None
 
 
-def _attr_assignments(tree: ast.AST):
-    """Yield (class_node, assignment_stmt, names) for every class that sets `_no_split_modules`."""
-    for cls in ast.walk(tree):
-        if not isinstance(cls, ast.ClassDef):
-            continue
-        for stmt in cls.body:
-            if isinstance(stmt, ast.Assign):
-                targets, value = stmt.targets, stmt.value
-            elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
-                targets, value = [stmt.target], stmt.value
-            else:
-                continue
-            if any(isinstance(t, ast.Name) and t.id == "_no_split_modules" for t in targets):
-                names = _literal_names(value)
-                if names is not None:  # non-literal (`= Other._no_split_modules`) cannot be checked
-                    yield cls, stmt, names
-
-
-def _bad_entries(tree: ast.AST):
-    """Yield (class_name, lineno, bad_name, suggestions) for entries that are not classes of `tree`."""
-    known = _known_names(tree)
-    candidates = [n for n in known if n[:1].isupper()]
-    for cls, stmt, names in _attr_assignments(tree):
-        for name in names:
-            if name in known or name.startswith(RUNTIME_CLASS_PREFIXES):
-                continue
-            yield cls.name, stmt.lineno, name, difflib.get_close_matches(name, candidates, n=3, cutoff=0.6)
-
-
-def _generated_siblings(modular_path: Path):
-    """`modeling_*.py` files in the same directory whose header says they come from this modular file."""
-    for sibling in sorted(modular_path.parent.glob("modeling_*.py")):
-        try:
-            head = "\n".join(sibling.read_text(encoding="utf-8").splitlines()[:20])
-        except OSError:
-            continue
-        if GENERATED_MARKER in head and modular_path.name in head:
-            yield sibling
+def _name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_name(node.value)}.{node.attr}"
+    return ""
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
-    file_name = file_path.name
-    if not (file_name.startswith("modeling_") or file_name.startswith("modular_")):
-        return []
+    # The cutoff only exempts the style checks: a misplaced `@requires` crashes every call, whatever the model's age.
+    exempt = is_exempt_by_cutoff(file_path, CUTOFF_DATE)
+    names = {"requires": "requires", "requires_backends": "requires_backends"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in {
+            "utils",
+            "utils.import_utils",
+            "transformers.utils",
+            "transformers.utils.import_utils",
+        }:
+            for alias in node.names:
+                names[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in {"transformers.utils", "transformers.utils.import_utils"}:
+                    prefix = alias.asname or alias.name
+                    for helper in ("requires", "requires_backends"):
+                        names[f"{prefix}.{helper}"] = helper
 
-    violations: list[Violation] = []
-    if file_path.name.startswith("modeling_"):
-        for cls, line, name, hints in _bad_entries(tree):
-            if _has_rule_suppression(source_lines, RULE_ID, line):
-                continue
-            violations.append(
-                Violation(
-                    file_path=file_path,
-                    line_number=line,
-                    message=(
-                        f"{cls}._no_split_modules lists `{name}`, which is not a class in {file_path.name}, so accelerate "
-                        f"will never match it. Did you mean one of these: {hints}?"
-                    ),
-                )
-            )
-    # check modular generated files similar way as TRF055 does for backbone/multimodal models
-    elif file_path.name.startswith("modular_"):
-        modular_classes = {c.name: c for c in ast.walk(tree) if isinstance(c, ast.ClassDef)}
-        for sibling in _generated_siblings(file_path):
-            try:
-                generated_tree = ast.parse(sibling.read_text(encoding="utf-8"))
-            except SyntaxError:
-                continue
-            for cls, _, name, hints in _bad_entries(generated_tree):
-                node = modular_classes.get(cls)
-                if node is None:
-                    # class pulled in by the converter without being defined here: no better anchor
-                    line = 1
-                else:
-                    own = [s for c, s, _ in _attr_assignments(node) if c is node]
-                    line = own[0].lineno if own else node.lineno
-                if _has_rule_suppression(source_lines, RULE_ID, line):
-                    continue
-                violations.append(
-                    Violation(
-                        file_path=file_path,
-                        line_number=line,
-                        message=(
-                            f"{cls}._no_split_modules lists `{name}`, which is not a class in {sibling.name} generated from {file_path.name}, "
-                            f"so accelerate will never match it. Did you mean one of these: {hints}?"
-                        ),
+    base = _base_requirements(tree, file_path)
+    generated = _generated_requirements(file_path)
+    object_requirements = {
+        node: generated[node.name] for node in tree.body if isinstance(node, _DEFINITIONS) and node.name in generated
+    }
+    violations = []
+
+    def report(node: ast.expr, message: str):
+        if not _has_rule_suppression(source_lines, RULE_ID, node.lineno):
+            violations.append(Violation(file_path, node.lineno, f"{RULE_ID}: {message}"))
+
+    def decorators(node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+        result = []
+        for decorator in node.decorator_list:
+            if isinstance(decorator, ast.Call) and names.get(_name(decorator.func)) == "requires":
+                for keyword in decorator.keywords:
+                    if keyword.arg == "backends" and isinstance(keyword.value, (ast.Tuple, ast.List)):
+                        backends = _strings(keyword.value)
+                        if backends is not None:
+                            result.append((decorator, backends))
+        return result
+
+    def descriptor(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[int, str] | None:
+        for index, decorator in enumerate(node.decorator_list):
+            if isinstance(decorator, ast.Name) and decorator.id in _DESCRIPTORS:
+                return index, decorator.id
+        return None
+
+    def visit(node: ast.AST, class_backends: set[str], file_backends: set[str]):
+        if isinstance(node, _DEFINITIONS):
+            file_backends = object_requirements.get(node, file_backends)
+            declared = decorators(node)
+            available = file_backends | class_backends if not isinstance(node, ast.ClassDef) else file_backends
+            for decorator, backends in [] if exempt else declared:
+                redundant = backends & available
+                if redundant or not backends:
+                    detail = ", ".join(f"`{backend}`" for backend in sorted(redundant)) or "an empty backend list"
+                    action = (
+                        "Remove this `@requires(backends=...)` decorator."
+                        if backends <= available
+                        else f"Remove {detail} from `@requires(backends=...)`."
                     )
-                )
+                    report(
+                        decorator,
+                        f"`{node.name}` repeats requirements already supplied by the file or class ({detail}). "
+                        f"{action}",
+                    )
 
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                wrapped_by = descriptor(node)
+                if wrapped_by is not None:
+                    index, kind = wrapped_by
+                    for decorator in node.decorator_list[:index]:
+                        if isinstance(decorator, ast.Call) and names.get(_name(decorator.func)) == "requires":
+                            report(
+                                decorator,
+                                f"`@requires` sits above `@{kind}` on `{node.name}`, so it wraps a {kind} object "
+                                f"and every call raises `TypeError`. Move it below `@{kind}`.",
+                            )
+                body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+                if not exempt and body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Call):
+                    call = body[0].value
+                    if names.get(_name(call.func)) == "requires_backends":
+                        backend_arg = (
+                            call.args[1]
+                            if len(call.args) == 2
+                            else next((kw.value for kw in call.keywords if kw.arg == "backends"), None)
+                        )
+                        if backend_arg is not None and _strings(backend_arg) is not None:
+                            report(
+                                call,
+                                f"`{node.name}` starts with `requires_backends(...)`. "
+                                "Remove it and use a `@requires(backends=...)` decorator instead"
+                                + (f", placed below `@{wrapped_by[1]}`." if wrapped_by else "."),
+                            )
+                # A nested function is not a method of the enclosing class.
+                class_backends = set()
+            else:
+                class_backends = set().union(*(backends for _, backends in declared))
+            for child in node.body:
+                visit(child, class_backends, file_backends)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, class_backends, file_backends)
+
+    visit(tree, set(), base)
     return violations

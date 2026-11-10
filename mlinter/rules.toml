@@ -1157,3 +1157,28 @@ diff = '''
 -    images_kwargs: AcmeImagesKwargs
 +    num_crops: int
 '''
+
+[rules.TRF066]
+description = "Use `@requires` for unconditional backend checks and declare only requirements additional to the file or class."
+default_enabled = true
+# No contribution date is available for these existing model directories.
+allowlist_models = ["auto", "timm_backbone", "timm_wrapper", "wav2vec2_with_lm"]
+cutoff_date = "2026-10-29"
+
+[rules.TRF066.explanation]
+what_it_does = "Flags backends in `@requires` that repeat the file's implicit requirements or, for a method, its enclosing class's explicit requirements. Also flags `requires_backends(...)` if it could be written as a `@requires` decorator instead."
+why_bad = "Repeating backend requirements obscures which dependencies a method actually adds. An unconditional check at the start of a function belongs in `@requires(backends=...)`, which exposes dependency metadata and performs the check when the function is called. Keep `requires_backends` for conditional requirements."
+diff = '''
+ # image_processing_pil_acme.py already requires vision.
+-@requires(backends=("vision", "torch"))
++@requires(backends=("torch",))
+ class AcmeImageProcessorPil(PilBackend):
+-    @requires(backends=("torch",))
+     def post_process(self, outputs):
+         return outputs
+
++    @requires(backends=("scipy",))
+     def refine(self, outputs):
+-        requires_backends(self, ["scipy"])
+         return outputs
+'''

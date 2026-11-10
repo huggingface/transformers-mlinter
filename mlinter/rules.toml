@@ -1206,12 +1206,12 @@ diff = '''
          return outputs.hidden_states[self.layer_idx]
 '''
 
-[rules.TRF067]
+[rules.TRF068]
 description = "`_no_split_modules` must only list classes that exist in the (generated) modeling file."
 default_enabled = true
 allowlist_models = ["esm"]
 
-[rules.TRF067.explanation]
+[rules.TRF068.explanation]
 what_it_does = """
 Checks every `_no_split_modules` assignment against the classes the modeling file defines or imports. \
 `modeling_*.py` files are checked directly. `modular_*.py` files are checked through the `modeling_*.py` \
@@ -1229,3 +1229,4 @@ diff = '''
  class Qwen4ExpModel(Qwen3_5MoeModel):
 -    # inherits ["Qwen3_5MoeDecoderLayer"] -> converted to "Qwen4ExpDecoderLayer", which does not exist
 +    _no_split_modules = ["Qwen4ExpTextDecoderLayer"]
+'''

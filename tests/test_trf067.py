@@ -193,3 +193,193 @@ class FooModel(FooPreTrainedModel):
         return image_outputs.hidden_states[-2]
 """
         self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    # --- Regressions from review on huggingface/transformers-mlinter#85 ---
+
+    def test_trf067_alias_stops_at_rebind(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+        hidden_states = outputs.hidden_states
+        hidden_states = hidden_states[-2]
+        hidden_states = self.proj(hidden_states)
+        return hidden_states
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_result_name_stops_at_rebind(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+        first = outputs.hidden_states[-2]
+        outputs = self.other(x, output_hidden_states=True)
+        return first, torch.stack(outputs.hidden_states)
+"""
+        violations = self._run(mlinter.TRF067, source)
+        self.assertEqual([violation.line_number for violation in violations], [4])
+
+    def test_trf067_flags_annotated_result(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs: BaseModelOutput = self.enc(x, output_hidden_states=True)
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_flags_kwargs_update_and_setdefault(self):
+        for force in ("kwargs.update(output_hidden_states=True)", 'kwargs.setdefault("output_hidden_states", True)'):
+            with self.subTest(force=force):
+                source = f"""
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        {force}
+        outputs = self.enc(x, **kwargs)
+        return outputs.hidden_states[-2]
+"""
+                self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_ignores_forced_kwargs_reset_before_the_call(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        kwargs["output_hidden_states"] = True
+        kwargs["output_hidden_states"] = False
+        outputs = self.enc(x, **kwargs)
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_ignores_kwargs_forced_in_another_branch(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        if self.training:
+            kwargs["output_hidden_states"] = True
+            return self.loss(x, **kwargs)
+        outputs = self.enc(x, **kwargs)
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_flags_kwargs_forced_inside_an_enclosing_block(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        with torch.no_grad():
+            kwargs["output_hidden_states"] = True
+            outputs = self.enc(x, **kwargs)
+        return [outputs.hidden_states[i + 1] for i in self.extract_layers]
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_allows_handing_the_tuple_on(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+        feat = outputs.hidden_states[-2]
+        return FooOutput(last=feat, hidden_states=outputs.hidden_states)
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_still_flags_returning_the_whole_output(self):
+        # The tuple itself isn't handed on, only the output holding it: that's the get_image_features pattern.
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
+        kwargs["output_hidden_states"] = True
+        image_outputs = self.vision_tower(pixel_values, **kwargs)
+        image_outputs.pooler_output = self.projector(image_outputs.hidden_states[vision_feature_layer])
+        return image_outputs
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_allows_keyword_consumers(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+        last = outputs.hidden_states[-1]
+        return last, self.weighted_sum(hidden_states=outputs.hidden_states)
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_allows_indexing_every_position(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        hs = self.enc(x, output_hidden_states=True).hidden_states
+        out = ()
+        for i in range(len(hs)):
+            out += (hs[i],)
+        return out
+
+    def stages(self, x):
+        hs = self.enc(x, output_hidden_states=True).hidden_states
+        return [hs[idx] for idx, stage in enumerate(self.stage_names)]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_suppression_above_a_multiline_call(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        # trf-ignore: TRF067
+        outputs = self.enc(
+            x,
+            output_hidden_states=True,
+        )
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_shared_forced_kwargs_need_every_call_to_index(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        kwargs["output_hidden_states"] = True
+        selected = self.enc(x, **kwargs).hidden_states[-2]
+        stacked = torch.stack(self.other(x, **kwargs).hidden_states)
+        return selected, stacked
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_flags_kwargs_forced_under_a_condition(self):
+        # internvl, qianfan_ocr: the force only happens on one path, but on that path it leaks.
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
+        if vision_feature_layer != -1:
+            kwargs["output_hidden_states"] = True
+        vision_outputs = self.vision_tower(pixel_values=pixel_values, **kwargs)
+        if vision_feature_layer == -1:
+            return vision_outputs.last_hidden_state
+        return vision_outputs.hidden_states[vision_feature_layer]
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_follows_kwargs_rebuilt_from_themselves(self):
+        # mistral3: dropping `None` values keeps the forced flag.
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
+        kwargs["output_hidden_states"] = True
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        image_outputs = self.vision_tower(pixel_values, **kwargs)
+        return image_outputs.hidden_states[vision_feature_layer]
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_ignores_kwargs_replaced_by_a_fresh_dict(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        kwargs["output_hidden_states"] = True
+        kwargs = {"return_dict": True}
+        outputs = self.enc(x, **kwargs)
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])

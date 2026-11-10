@@ -52,8 +52,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   same function only reads that call's `.hidden_states[...]` by index, as `get_image_features` does with
   `vision_feature_layer`. Each forced capture keeps one activation per layer alive; for Aria in vLLM it raised peak
   activation memory from 5.79 GiB to 14.91 GiB. The fix is `@select_hidden_states` on a method that forwards
-  `**kwargs`, or an index passed directly as `output_hidden_states=<index>`. Iterating, slicing or stacking the
-  whole tuple is exempt, as are `@filter_output_hidden_states` backbones. The decorator and the fixes for every
+  `**kwargs`, or an index passed directly as `output_hidden_states=<index>`. Code that needs the whole tuple
+  (iterating, slicing or stacking it, or handing it on in an output) is exempt, as are
+  `@filter_output_hidden_states` backbones. The decorator and the fixes for every
   existing model land in
   [huggingface/transformers#49594](https://github.com/huggingface/transformers/pull/49594).
 

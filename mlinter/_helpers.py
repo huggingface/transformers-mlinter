@@ -252,6 +252,18 @@ def iter_pretrained_classes(tree: ast.Module, source_lines: list[str], rule_id: 
     return results
 
 
+def _decorator_names(function_node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> list[str]:
+    """Simple names of a function's or class's decorators, e.g. `auto_docstring` for `@auto_docstring(...)`."""
+    names = []
+    for decorator in function_node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        try:
+            names.append(_simple_name(full_name(target)))
+        except ValueError:
+            continue
+    return names
+
+
 def _get_class_assignments(class_node: ast.ClassDef) -> dict[str, ast.AST]:
     assignments: dict[str, ast.AST] = {}
     for item in class_node.body:

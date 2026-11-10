@@ -21,6 +21,7 @@ from pathlib import Path
 from ._helpers import (
     GENERATED_FILE_MARKER,
     Violation,
+    _decorator_names,
     _has_rule_suppression,
     _simple_name,
     full_name,
@@ -180,17 +181,6 @@ def _class_kind(classes: dict[str, ast.ClassDef], class_node: ast.ClassDef, visi
         if kind is not None:
             return kind
     return None
-
-
-def _decorator_names(function_node: FunctionNode | ast.ClassDef) -> list[str]:
-    names = []
-    for decorator in function_node.decorator_list:
-        target = decorator.func if isinstance(decorator, ast.Call) else decorator
-        try:
-            names.append(_simple_name(full_name(target)))
-        except ValueError:
-            continue
-    return names
 
 
 def _find_method(class_node: ast.ClassDef, method_name: str) -> FunctionNode | None:

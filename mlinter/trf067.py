@@ -18,28 +18,25 @@ import ast
 import difflib
 from pathlib import Path
 
-from ._helpers import Violation, _has_rule_suppression
+from ._helpers import GENERATED_FILE_MARKER, Violation, _has_rule_suppression, read_file_head
 
 
 RULE_ID = ""  # Set by discovery
 
-GENERATED_MARKER = "automatically generated from"
 # torch.nn.utils.parametrize builds classes named "Parametrized" + <original name> at runtime,
 # so they can never be found in a source file. Check `hubert` in transformers source code for an ex
 RUNTIME_CLASS_PREFIXES = ("Parametrized",)
-
+# Every tree produced from a given modular file, keyed by that modular file.
+_GENERATED_TREES_CACHE: dict[Path, dict[Path, ast.Module]] = {}
 
 def _known_names(tree: ast.AST) -> set[str]:
-    """Class names defined anywhere in the file, plus every imported / aliased top-level name."""
+    """Class names defined anywhere in the file, plus every imported name (under its real, un-aliased name)."""
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             names.add(node.name)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            names.update((a.asname or a.name).split(".")[0] for a in node.names)
-    for node in getattr(tree, "body", []):
-        if isinstance(node, ast.Assign):
-            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+            names.update(a.name.split(".")[0] for a in node.names)
     return names
 
 
@@ -80,62 +77,74 @@ def _bad_entries(tree: ast.AST):
             yield cls.name, stmt.lineno, name, difflib.get_close_matches(name, candidates, n=3, cutoff=0.6)
 
 
-def _generated_siblings(modular_path: Path):
-    """`modeling_*.py` files in the same directory whose header says they come from this modular file."""
-    for sibling in sorted(modular_path.parent.glob("modeling_*.py")):
-        try:
-            head = "\n".join(sibling.read_text(encoding="utf-8").splitlines()[:20])
-        except OSError:
+def _is_generated_from(path: Path, modular_path: Path) -> bool:
+    head = read_file_head(path)
+    return head is not None and GENERATED_FILE_MARKER in head and modular_path.name in head
+
+
+def _generated_trees(modular_path: Path) -> dict[Path, ast.Module]:
+    """Parsed AST of every file the converter produced from `modular_path`, keyed by file path.
+
+    A modular file can emit several files (`modeling_*.py`, `processing_*.py`,
+    `image_processing_pil_*.py`, ...) whose names do not always follow from the modular file name, so
+    the generation banner is what identifies them.
+    """
+    if modular_path in _GENERATED_TREES_CACHE:
+        return _GENERATED_TREES_CACHE[modular_path]
+
+    trees: dict[Path, ast.Module] = {}
+    for sibling in sorted(modular_path.parent.glob("*.py")):
+        if sibling == modular_path or not _is_generated_from(sibling, modular_path):
             continue
-        if GENERATED_MARKER in head and modular_path.name in head:
-            yield sibling
+        try:
+            trees[sibling] = ast.parse(sibling.read_text(encoding="utf-8"), filename=str(sibling))
+        except (OSError, SyntaxError, ValueError):
+            continue
+    _GENERATED_TREES_CACHE[modular_path] = trees
+    return trees
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     file_name = file_path.name
-    if not (file_name.startswith("modeling_") or file_name.startswith("modular_")):
-        return []
-
     violations: list[Violation] = []
-    if file_path.name.startswith("modeling_"):
+    if file_name.startswith("modeling_"):
         for cls, line, name, hints in _bad_entries(tree):
             if _has_rule_suppression(source_lines, RULE_ID, line):
                 continue
+            hints = f" Did you mean one of these: {', '.join(f'{h}' for h in hints)}?" if hints else ""
             violations.append(
                 Violation(
                     file_path=file_path,
                     line_number=line,
                     message=(
                         f"{cls}._no_split_modules lists `{name}`, which is not a class in {file_path.name}, so accelerate "
-                        f"will never match it. Did you mean one of these: {hints}?"
+                        f"will never match it.{hints}"
                     ),
                 )
             )
     # check modular generated files similar way as TRF055 does for backbone/multimodal models
-    elif file_path.name.startswith("modular_"):
+    elif file_name.startswith("modular_"):
         modular_classes = {c.name: c for c in ast.walk(tree) if isinstance(c, ast.ClassDef)}
-        for sibling in _generated_siblings(file_path):
-            try:
-                generated_tree = ast.parse(sibling.read_text(encoding="utf-8"))
-            except SyntaxError:
-                continue
+        for generated_path, generated_tree in _generated_trees(file_path).items():
             for cls, _, name, hints in _bad_entries(generated_tree):
                 node = modular_classes.get(cls)
                 if node is None:
-                    # class pulled in by the converter without being defined here: no better anchor
-                    line = 1
-                else:
-                    own = [s for c, s, _ in _attr_assignments(node) if c is node]
-                    line = own[0].lineno if own else node.lineno
+                    # class pulled in by the converter without being defined here
+                    continue
+                own = [s for c, s, _ in _attr_assignments(node) if c is node]
+                line = own[0].lineno if own else node.lineno
                 if _has_rule_suppression(source_lines, RULE_ID, line):
                     continue
+                hints = f" Did you mean one of these: {', '.join(hints)}?" if hints else ""
                 violations.append(
                     Violation(
                         file_path=file_path,
                         line_number=line,
                         message=(
-                            f"{cls}._no_split_modules lists `{name}`, which is not a class in {sibling.name} generated from {file_path.name}, "
-                            f"so accelerate will never match it. Did you mean one of these: {hints}?"
+                            f"{cls}._no_split_modules lists `{name}`, which is not a class in "
+                            f"{generated_path.name} generated from {file_path.name}, "
+                            f"so accelerate will never match it.{hints}"
                         ),
                     )
                 )
+    return violations

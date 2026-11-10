@@ -1188,12 +1188,16 @@ diff = '''
 description = "`_no_split_modules` must only list classes that exist in the (generated) modeling file."
 default_enabled = true
 allowlist_models = []
- 
+
 [rules.TRF067.explanation]
 what_it_does = """
 Checks every `_no_split_modules` assignment against the classes the modeling file defines or imports. \
 `modeling_*.py` files are checked directly. `modular_*.py` files are checked through the `modeling_*.py` \
-files they generate, and each problem is reported on the modular class so `# trf-ignore: TRFXXX` works there."""
+files they generate, and each problem is reported on the modular class so `# trf-ignore: TRFXXX` works there.
+Note that for modular files this rule inspects the generated files on disk so the results reflect the last converted
+file. After editing `modular_*.py`, regenerate before running the linter, otherwise a fix will not show up and
+a new breakage will not be caught.
+"""
 why_bad = """
 accelerate matches `_no_split_modules` against the class names of the model's submodules. A name that is \
 not a class never matches, so the layer is silently split across devices. In modular files this happens \

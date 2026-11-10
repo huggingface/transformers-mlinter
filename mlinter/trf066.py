@@ -23,6 +23,8 @@ from ._helpers import GENERATED_FILE_MARKER, Violation, _has_rule_suppression, i
 RULE_ID = ""  # Set by discovery
 CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
 _DEFINITIONS = (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+# `@requires` returns a plain function wrapper, so it must wrap the function before these turn it into a descriptor.
+_DESCRIPTORS = ("classmethod", "staticmethod")
 
 
 def _base_requirements(tree: ast.Module, file_path: Path) -> set[str]:
@@ -88,9 +90,8 @@ def _name(node: ast.AST) -> str:
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
-    if is_exempt_by_cutoff(file_path, CUTOFF_DATE):
-        return []
-
+    # The cutoff only exempts the style checks: a misplaced `@requires` crashes every call, whatever the model's age.
+    exempt = is_exempt_by_cutoff(file_path, CUTOFF_DATE)
     names = {"requires": "requires", "requires_backends": "requires_backends"}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module in {
@@ -130,12 +131,18 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                             result.append((decorator, backends))
         return result
 
+    def descriptor(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[int, str] | None:
+        for index, decorator in enumerate(node.decorator_list):
+            if isinstance(decorator, ast.Name) and decorator.id in _DESCRIPTORS:
+                return index, decorator.id
+        return None
+
     def visit(node: ast.AST, class_backends: set[str], file_backends: set[str]):
         if isinstance(node, _DEFINITIONS):
             file_backends = object_requirements.get(node, file_backends)
             declared = decorators(node)
             available = file_backends | class_backends if not isinstance(node, ast.ClassDef) else file_backends
-            for decorator, backends in declared:
+            for decorator, backends in [] if exempt else declared:
                 redundant = backends & available
                 if redundant or not backends:
                     detail = ", ".join(f"`{backend}`" for backend in sorted(redundant)) or "an empty backend list"
@@ -151,8 +158,18 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                     )
 
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                wrapped_by = descriptor(node)
+                if wrapped_by is not None:
+                    index, kind = wrapped_by
+                    for decorator in node.decorator_list[:index]:
+                        if isinstance(decorator, ast.Call) and names.get(_name(decorator.func)) == "requires":
+                            report(
+                                decorator,
+                                f"`@requires` sits above `@{kind}` on `{node.name}`, so it wraps a {kind} object "
+                                f"and every call raises `TypeError`. Move it below `@{kind}`.",
+                            )
                 body = node.body[1:] if ast.get_docstring(node) is not None else node.body
-                if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Call):
+                if not exempt and body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Call):
                     call = body[0].value
                     if names.get(_name(call.func)) == "requires_backends":
                         backend_arg = (
@@ -164,7 +181,8 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                             report(
                                 call,
                                 f"`{node.name}` starts with `requires_backends(...)`. "
-                                "Remove it and use a `@requires(backends=...)` decorator instead.",
+                                "Remove it and use a `@requires(backends=...)` decorator instead"
+                                + (f", placed below `@{wrapped_by[1]}`." if wrapped_by else "."),
                             )
                 # A nested function is not a method of the enclosing class.
                 class_backends = set()

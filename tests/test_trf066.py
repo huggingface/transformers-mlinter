@@ -270,3 +270,56 @@ class FooModel(ImportedModel): pass
             for name in ("image_processing_pil_foo.py", "modeling_foo.py"):
                 (root / name).write_text(header + "def helper(): pass")
             self.assertEqual(mlinter.analyze_file(modular, source, enabled_rules={mlinter.TRF066}), [])
+
+    def test_requires_above_descriptor(self):
+        source = """
+class Processor:
+    @requires(backends=("scipy",))
+    @classmethod
+    def from_pretrained(cls):
+        pass
+
+    @requires(backends=("scipy",))
+    @staticmethod
+    def helper():
+        pass
+
+    @classmethod
+    @requires(backends=("scipy",))
+    def fine(cls):
+        pass
+
+    @staticmethod
+    @requires(backends=("scipy",))
+    def also_fine():
+        pass
+"""
+        violations = self.check(source)
+        self.assertEqual([v.line_number for v in violations], [3, 8])
+        self.assertIn("sits above `@classmethod` on `from_pretrained`", violations[0].message)
+        self.assertIn("Move it below `@staticmethod`.", violations[1].message)
+
+    def test_requires_above_descriptor_ignores_cutoff(self):
+        source = """
+class Processor:
+    @requires(backends=("torch",))
+    @classmethod
+    def from_pretrained(cls):
+        requires_backends(cls, "scipy")
+"""
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2020, 1, 1)):
+            with patch.object(trf066, "CUTOFF_DATE", "2026-10-29"):
+                violations = self.check(source, "modeling_foo.py")
+        # Only the crash is reported: the redundant `torch` and the leading call are exempt by the cutoff.
+        self.assertEqual([v.line_number for v in violations], [3])
+        self.assertIn("raises `TypeError`", violations[0].message)
+
+    def test_leading_call_in_descriptor_says_where_the_decorator_goes(self):
+        source = """
+class Processor:
+    @classmethod
+    def from_pretrained(cls):
+        requires_backends(cls, ["timm"])
+"""
+        (violation,) = self.check(source)
+        self.assertTrue(violation.message.endswith("decorator instead, placed below `@classmethod`."))

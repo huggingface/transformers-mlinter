@@ -1159,11 +1159,36 @@ diff = '''
 '''
 
 [rules.TRF066]
+description = "Use `@requires` for unconditional backend checks and declare only requirements additional to the file or class."
+default_enabled = true
+# No contribution date is available for these existing model directories.
+allowlist_models = ["auto", "timm_backbone", "timm_wrapper", "wav2vec2_with_lm"]
+cutoff_date = "2026-10-29"
+
+[rules.TRF066.explanation]
+what_it_does = "Flags backends in `@requires` that repeat the file's implicit requirements or, for a method, its enclosing class's explicit requirements. Also flags `requires_backends(...)` if it could be written as a `@requires` decorator instead, and a `@requires` placed above `@classmethod` or `@staticmethod`. The cutoff exempts older models from everything except the misplaced decorator."
+why_bad = "Repeating backend requirements obscures which dependencies a method actually adds. An unconditional check at the start of a function belongs in `@requires(backends=...)`, which exposes dependency metadata and performs the check when the function is called. Keep `requires_backends` for conditional requirements. `@requires` wraps a plain function, so above `@classmethod` or `@staticmethod` it wraps the descriptor instead and every call raises `TypeError`: it must sit below them."
+diff = '''
+ # image_processing_pil_acme.py already requires vision.
+-@requires(backends=("vision", "torch"))
++@requires(backends=("torch",))
+ class AcmeImageProcessorPil(PilBackend):
+-    @requires(backends=("torch",))
+     def post_process(self, outputs):
+         return outputs
+
++    @requires(backends=("scipy",))
+     def refine(self, outputs):
+-        requires_backends(self, ["scipy"])
+         return outputs
+'''
+
+[rules.TRF067]
 description = "A sub-model call must not switch on every hidden state when the caller only reads some of them by index."
 default_enabled = true
 allowlist_models = []
 
-[rules.TRF066.explanation]
+[rules.TRF067.explanation]
 what_it_does = "In modeling_*.py and modular_*.py, flags a call made with every hidden state switched on -- `output_hidden_states=True` passed to it, or `kwargs[\"output_hidden_states\"] = True` before a call that unpacks `**kwargs` -- when the same function then only reads that call's `.hidden_states[...]` by index: a single layer, a config value such as `vision_feature_layer`, or a comprehension over feature layers. Code that consumes the whole tuple (iterates it, slices it, or passes it to `torch.stack` or a weighted sum) is exempt, as are backbones decorated with `@filter_output_hidden_states`."
 why_bad = "`output_hidden_states=True` keeps one `(batch, seq, hidden)` tensor per layer alive until the call returns, even when only one or two of them are projected, so peak activation memory grows with depth times image tokens. For Aria in vLLM it raised peak activation memory from 5.79 GiB to 14.91 GiB, cost about half the KV cache and cut image throughput by roughly 30%. `output_hidden_states` also takes an index or list of indices, which captures only those hidden states. The returned tuple keeps its full length, with `None` for the rest, so the same indices pick the same features. Decorate a method that forwards `**kwargs` with `@select_hidden_states`, naming its feature-layer argument or passing a function of the model; it lets an explicit `output_hidden_states` from the caller win. For a single call, pass the index directly."
 diff = '''

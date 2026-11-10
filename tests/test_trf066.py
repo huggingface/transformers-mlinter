@@ -12,184 +12,314 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 
-from tests.rule_test_utils import RuleTestCase, mlinter
+from mlinter import trf066
+from tests.rule_test_utils import RuleTestCase, _helpers_mod, date, mlinter, patch, tempfile
 
 
 class TRF066Test(RuleTestCase):
-    # --- TRF066: don't capture every hidden state to read only some of them ---
+    def check(self, source, file_name="processing_foo.py"):
+        return self._run(mlinter.TRF066, source, file_name=file_name)
 
-    def test_trf066_flags_forced_kwargs_with_single_index(self):
+    def test_class_and_method_overlap(self):
         source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, return_dict=True, **kwargs)
-        selected_image_feature = image_outputs.hidden_states[vision_feature_layer]
-        return self.multi_modal_projector(selected_image_feature)
+@requires(backends=("torch",))
+class Processor:
+    @requires(backends=("torch", "scipy"))
+    def process(self):
+        pass
+    @requires(backends=["torch"])
+    def other(self):
+        pass
 """
-        violations = self._run(mlinter.TRF066, source)
-        self.assertEqual(len(violations), 1)
-        self.assertEqual(violations[0].line_number, 4)
-        self.assertIn("get_image_features", violations[0].message)
-        self.assertIn("select_hidden_states", violations[0].message)
+        violations = self.check(source)
+        self.assertEqual([v.line_number for v in violations], [4, 7])
+        self.assertIn("Remove `torch` from `@requires(backends=...)`.", violations[0].message)
+        self.assertIn("Remove this `@requires(backends=...)` decorator.", violations[1].message)
 
-    def test_trf066_flags_comprehension_over_feature_layers(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, **kwargs):
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, **kwargs)
-        hs_pool = [image_outputs.hidden_states[layer_idx] for layer_idx in self.config.vision_feature_layer]
-        return torch.cat(hs_pool, dim=-1)
-"""
-        self.assertEqual(len(self._run(mlinter.TRF066, source)), 1)
-
-    def test_trf066_flags_keyword_flag_and_alias(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_img_features(self, img_embeds, attention_mask):
-        img_processor_output = self.img_processor(
-            img_embeds, patch_attention_mask=attention_mask, output_hidden_states=True
+    def test_additional_method_requirements(self):
+        self.assertEqual(
+            self.check("""
+@requires(backends=("torch",))
+class Processor:
+    @requires(backends=("scipy",))
+    def process(self):
+        pass
+"""),
+            [],
         )
-        hidden_states = img_processor_output.hidden_states
-        return hidden_states[self.layer_idx]
-"""
-        violations = self._run(mlinter.TRF066, source)
-        self.assertEqual(len(violations), 1)
-        self.assertEqual(violations[0].line_number, 5)
 
-    def test_trf066_flags_chained_read_on_the_call(self):
+    def test_file_requirements(self):
+        for file_name, backend, base in (
+            ("modeling_foo.py", "torch", "object"),
+            ("generation_foo.py", "torch", "object"),
+            ("image_processing_pil_foo.py", "vision", "PilBackend"),
+            ("image_processing_foo.py", "torchvision", "TorchvisionBackend"),
+            ("video_processing_foo.py", "torch", "BaseVideoProcessor"),
+            ("tokenization_foo_fast.py", "tokenizers", "object"),
+        ):
+            with self.subTest(file_name=file_name):
+                self.assertEqual(
+                    len(self.check(f'@requires(backends=("{backend}",))\nclass Foo({base}): pass', file_name)), 1
+                )
+
+    def test_no_inferred_modular_or_pil_torch_requirements(self):
+        source = '@requires(backends=("torch",))\nclass Foo(ImportedProcessor): pass'
+        for filename in ("modular_foo.py", "image_processing_pil_foo.py", "processing_foo.py"):
+            with self.subTest(filename=filename):
+                self.assertEqual(self.check(source, filename), [])
+
+    def test_leading_call_after_docstring(self):
+        violations = self.check('''
+def process(outputs):
+    """Process outputs."""
+    # A comment is not an operation.
+    requires_backends(process, ["torch"])
+    return outputs
+''')
+        self.assertEqual([v.line_number for v in violations], [5])
+        self.assertIn("Remove it and use a `@requires(backends=...)` decorator instead.", violations[0].message)
+
+    def test_leading_call_after_empty_docstring(self):
+        source = 'def process():\n    ""\n    requires_backends(process, "torch")'
+        self.assertEqual(len(self.check(source)), 1)
+
+    def test_leading_calls(self):
+        for call in (
+            'requires_backends(self, "torch")',
+            'requires_backends(self, ("torch", "scipy"))',
+            'requires_backends(self, backends=["torch"])',
+            'requires_backends(obj=self, backends=["torch"])',
+        ):
+            with self.subTest(call=call):
+                self.assertEqual(len(self.check(f"class Foo:\n    async def process(self):\n        {call}")), 1)
+
+    def test_conditional_later_and_dynamic_calls(self):
+        for body in (
+            'if outputs is None:\n        requires_backends(process, "torch")',
+            'outputs = None\n    requires_backends(process, "torch")',
+            "requires_backends(process, backends)",
+            "requires_backends(process, [backend])",
+            "requires_backends(process, outputs.backends)",
+            'other.requires_backends(process, "torch")',
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self.check(f"def process(outputs):\n    {body}"), [])
+
+    def test_version_constraints_are_not_discarded(self):
+        self.assertEqual(
+            self.check(
+                """
+@requires(backends=("torch>=2.5",))
+class Processor:
+    @requires(backends=("torch>=2.6",))
+    def process(self): pass
+""",
+                "modeling_foo.py",
+            ),
+            [],
+        )
+        self.assertEqual(
+            len(
+                self.check("""
+@requires(backends=("torch>=2.5",))
+class Processor:
+    @requires(backends=("torch>=2.5",))
+    def process(self): pass
+""")
+            ),
+            1,
+        )
+
+    def test_dynamic_decorators(self):
+        self.assertEqual(
+            self.check("""
+@requires(backends=BACKENDS)
+class Foo:
+    @requires(backends=("torch",))
+    def process(self): pass
+@requires(backends=("torch", *EXTRA))
+def process(): pass
+"""),
+            [],
+        )
+
+    def test_nested_scopes_do_not_inherit_class_requirements(self):
+        self.assertEqual(
+            self.check("""
+@requires(backends=("torch",))
+class Outer:
+    @requires(backends=("torch",))
+    class Inner:
+        pass
+    def process(self):
+        @requires(backends=("torch",))
+        def nested(): pass
+@requires(backends=("torch",))
+def unrelated(): pass
+"""),
+            [],
+        )
+
+    def test_import_aliases(self):
+        self.assertEqual(
+            len(
+                self.check("""
+from ...utils.import_utils import requires as needs, requires_backends as check_backends
+@needs(backends=("torch",))
+class Foo:
+    @needs(backends=("torch",))
+    def process(self):
+        check_backends(self, "scipy")
+""")
+            ),
+            2,
+        )
+        self.assertEqual(
+            len(
+                self.check(
+                    """
+import transformers.utils.import_utils as iu
+@iu.requires(backends=("torch",))
+def process():
+    iu.requires_backends(process, "scipy")
+""",
+                    "modeling_foo.py",
+                )
+            ),
+            2,
+        )
+
+    def test_suppressions(self):
+        self.assertEqual(
+            self.check("""
+@requires(backends=("torch",))
+class Foo:
+    # trf-ignore: TRF066
+    @requires(backends=("torch",))
+    def process(self):
+        requires_backends(self, "scipy")  # trf-ignore: TRF066
+"""),
+            [],
+        )
+
+    def test_checks_any_supplied_file(self):
+        source = 'def process():\n    requires_backends(process, "torch")'
+        for filename in ("convert_foo.py", "test_modeling_foo.py", "utils.py"):
+            with self.subTest(filename=filename):
+                self.assertEqual(len(self.check(source, filename)), 1)
+
+    def test_empty_backend_list(self):
+        self.assertEqual(len(self.check("@requires(backends=())\ndef process(): pass")), 1)
+
+    def test_cutoff_exempts_older_models(self):
+        source = '@requires(backends=("torch",))\ndef process():\n    requires_backends(process, "scipy")'
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2026, 10, 28)):
+            with patch.object(trf066, "CUTOFF_DATE", "2026-10-29"):
+                self.assertEqual(self.check(source, "modeling_foo.py"), [])
+
+    def test_cutoff_checks_new_and_undated_models(self):
+        source = '@requires(backends=("torch",))\ndef process():\n    requires_backends(process, "scipy")'
+        for contribution in (date(2026, 10, 29), date(2026, 10, 30), None):
+            with self.subTest(contribution=contribution):
+                with patch.object(_helpers_mod, "model_contribution_date", return_value=contribution):
+                    with patch.object(trf066, "CUTOFF_DATE", "2026-10-29"):
+                        self.assertEqual(len(self.check(source, "modeling_foo.py")), 2)
+
+    def test_empty_cutoff_checks_older_models(self):
+        source = '@requires(backends=("torch",))\ndef process(): pass'
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2020, 1, 1)):
+            with patch.object(trf066, "CUTOFF_DATE", ""):
+                self.assertEqual(len(self.check(source, "modeling_foo.py")), 1)
+
+    def test_modular_uses_each_generated_files_requirements(self):
+        source = """from ..detr.image_processing_pil_detr import DetrImageProcessorPil
+@requires(backends=("vision",))
+class FooImageProcessorPil(DetrImageProcessorPil):
+    @requires(backends=("vision",))
+    def process(self): pass
+@requires(backends=("vision",))
+class FooModel(ImportedModel): pass
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            modular = root / "modular_foo.py"
+            header = f"# {_helpers_mod.GENERATED_FILE_MARKER} {modular.name}.\n"
+            (root / "image_processing_pil_foo.py").write_text(header + "class FooImageProcessorPil(PilBackend): pass")
+            (root / "modeling_foo.py").write_text(header + "class FooModel(PreTrainedModel): pass")
+            findings = mlinter.analyze_file(modular, source, enabled_rules={mlinter.TRF066})
+        self.assertEqual([v.line_number for v in findings], [2, 4])
+
+    def test_modular_ignores_unrelated_or_invalid_companions(self):
+        source = '@requires(backends=("vision",))\nclass Foo(ImportedProcessor): pass'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            modular = root / "modular_foo.py"
+            header = f"# {_helpers_mod.GENERATED_FILE_MARKER} {modular.name}.\n"
+            (root / "image_processing_foo.py").write_text("class Foo(TorchvisionBackend): pass")
+            (root / "image_processing_pil_foo.py").write_text(header + "class Foo(")
+            self.assertEqual(mlinter.analyze_file(modular, source, enabled_rules={mlinter.TRF066}), [])
+
+    def test_modular_shared_helper_uses_common_requirements(self):
+        source = '@requires(backends=("vision",))\ndef helper(): pass'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            modular = root / "modular_foo.py"
+            header = f"# {_helpers_mod.GENERATED_FILE_MARKER} {modular.name}.\n"
+            for name in ("image_processing_pil_foo.py", "modeling_foo.py"):
+                (root / name).write_text(header + "def helper(): pass")
+            self.assertEqual(mlinter.analyze_file(modular, source, enabled_rules={mlinter.TRF066}), [])
+
+    def test_requires_above_descriptor(self):
         source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values):
-        return self.vision_model(pixel_values, output_hidden_states=True).hidden_states[-2]
-"""
-        self.assertEqual(len(self._run(mlinter.TRF066, source)), 1)
+class Processor:
+    @requires(backends=("scipy",))
+    @classmethod
+    def from_pretrained(cls):
+        pass
 
-    def test_trf066_flags_modular_file_with_imported_base(self):
-        # The rule reads only the function's own body, so an imported base class changes nothing.
+    @requires(backends=("scipy",))
+    @staticmethod
+    def helper():
+        pass
+
+    @classmethod
+    @requires(backends=("scipy",))
+    def fine(cls):
+        pass
+
+    @staticmethod
+    @requires(backends=("scipy",))
+    def also_fine():
+        pass
+"""
+        violations = self.check(source)
+        self.assertEqual([v.line_number for v in violations], [3, 8])
+        self.assertIn("sits above `@classmethod` on `from_pretrained`", violations[0].message)
+        self.assertIn("Move it below `@staticmethod`.", violations[1].message)
+
+    def test_requires_above_descriptor_ignores_cutoff(self):
         source = """
-from ..llava.modeling_llava import LlavaModel
-
-
-class FooModel(LlavaModel):
-    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, **kwargs)
-        return image_outputs.hidden_states[vision_feature_layer]
+class Processor:
+    @requires(backends=("torch",))
+    @classmethod
+    def from_pretrained(cls):
+        requires_backends(cls, "scipy")
 """
-        self.assertEqual(len(self._run(mlinter.TRF066, source, file_name="modular_foo.py")), 1)
+        with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2020, 1, 1)):
+            with patch.object(trf066, "CUTOFF_DATE", "2026-10-29"):
+                violations = self.check(source, "modeling_foo.py")
+        # Only the crash is reported: the redundant `torch` and the leading call are exempt by the cutoff.
+        self.assertEqual([v.line_number for v in violations], [3])
+        self.assertIn("raises `TypeError`", violations[0].message)
 
-    def test_trf066_allows_select_hidden_states_decorator(self):
+    def test_leading_call_in_descriptor_says_where_the_decorator_goes(self):
         source = """
-class FooModel(FooPreTrainedModel):
-    @merge_with_config_defaults
-    @can_return_tuple
-    @select_hidden_states("vision_feature_layer")
-    @auto_docstring
-    def get_image_features(self, pixel_values, vision_feature_layer=None, **kwargs):
-        image_outputs = self.vision_tower(pixel_values, return_dict=True, **kwargs)
-        return image_outputs.hidden_states[vision_feature_layer]
-
-    @select_hidden_states(lambda self: [i + 1 for i in self.extract_layers])
-    def forward(self, pixel_values, **kwargs):
-        outputs = self.clip.get_image_features(pixel_values, **kwargs)
-        return [outputs.hidden_states[i + 1] for i in self.extract_layers]
+class Processor:
+    @classmethod
+    def from_pretrained(cls):
+        requires_backends(cls, ["timm"])
 """
-        self.assertEqual(self._run(mlinter.TRF066, source), [])
-
-    def test_trf066_allows_selecting_by_index(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_img_features(self, img_embeds):
-        outputs = self.img_processor(img_embeds, output_hidden_states=self.layer_idx)
-        return outputs.hidden_states[self.layer_idx]
-
-    def get_text_features(self, input_ids, **kwargs):
-        kwargs["output_hidden_states"] = kwargs.get("output_hidden_states") or -1
-        text_outputs = self.text_model(input_ids, **kwargs)
-        return text_outputs.hidden_states[-1][:, 0]
-"""
-        self.assertEqual(self._run(mlinter.TRF066, source), [])
-
-    def test_trf066_allows_stacking_the_whole_tuple(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, input_values):
-        outputs = self.semantic_model(input_values, output_hidden_states=True)
-        hidden_states = outputs.hidden_states
-        stacked = torch.stack([h for h in hidden_states], dim=1)
-        return stacked.mean(dim=1), hidden_states[-1]
-"""
-        self.assertEqual(self._run(mlinter.TRF066, source), [])
-
-    def test_trf066_allows_slicing_or_passing_the_tuple_on(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, pixel_values):
-        outputs = self.encoder(pixel_values, output_hidden_states=True)
-        return self.decoder(outputs.hidden_states)
-
-    def other(self, pixel_values):
-        outputs = self.encoder(pixel_values, output_hidden_states=True)
-        return [h[0] for h in outputs.hidden_states[1:]]
-"""
-        self.assertEqual(self._run(mlinter.TRF066, source), [])
-
-    def test_trf066_allows_filter_output_hidden_states_backbones(self):
-        source = """
-class FooBackbone(FooPreTrainedModel, BackboneMixin):
-    @can_return_tuple
-    @filter_output_hidden_states
-    def forward(self, pixel_values):
-        outputs = self.foo(pixel_values, output_hidden_states=True, return_dict=True)
-        hidden_states = outputs.hidden_states
-        feature_maps = ()
-        for idx, stage in enumerate(self.stage_names):
-            if stage in self.out_features:
-                feature_maps += (hidden_states[idx],)
-        return BackboneOutput(feature_maps=feature_maps)
-"""
-        self.assertEqual(self._run(mlinter.TRF066, source), [])
-
-    def test_trf066_ignores_unrelated_hidden_states_local(self):
-        # `hidden_states` is assigned before the forced call and never aliases its output tuple.
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, pixel_values, **kwargs):
-        hidden_states = self.embeddings(pixel_values)
-        first = hidden_states[0]
-        kwargs["output_hidden_states"] = True
-        outputs = self.encoder(first, **kwargs)
-        return self.head(outputs.hidden_states)
-"""
-        self.assertEqual(self._run(mlinter.TRF066, source), [])
-
-    def test_trf066_ignores_kwargs_forced_after_the_call(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def forward(self, pixel_values, **kwargs):
-        outputs = self.encoder(pixel_values, **kwargs)
-        kwargs["output_hidden_states"] = True
-        return outputs.hidden_states[-1]
-"""
-        self.assertEqual(self._run(mlinter.TRF066, source), [])
-
-    def test_trf066_ignores_configuration_files(self):
-        source = """
-def helper(model, x):
-    return model(x, output_hidden_states=True).hidden_states[-2]
-"""
-        self.assertEqual(self._run(mlinter.TRF066, source, file_name="configuration_foo.py"), [])
-
-    def test_trf066_suppression(self):
-        source = """
-class FooModel(FooPreTrainedModel):
-    def get_image_features(self, pixel_values, **kwargs):
-        # trf-ignore: TRF066
-        kwargs["output_hidden_states"] = True
-        image_outputs = self.vision_tower(pixel_values, **kwargs)
-        return image_outputs.hidden_states[-2]
-"""
-        self.assertEqual(self._run(mlinter.TRF066, source), [])
+        (violation,) = self.check(source)
+        self.assertTrue(violation.message.endswith("decorator instead, placed below `@classmethod`."))

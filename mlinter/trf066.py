@@ -12,189 +12,187 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF066: a sub-model call must not capture every hidden state when only some of them are read."""
+"""TRF066: declare backend requirements with non-redundant @requires decorators."""
 
 import ast
-from collections.abc import Iterator
 from pathlib import Path
 
-from ._helpers import Violation, _has_rule_suppression, call_leaf_name
+from ._helpers import GENERATED_FILE_MARKER, Violation, _has_rule_suppression, is_exempt_by_cutoff, read_file_head
 
 
 RULE_ID = ""  # Set by discovery
-
-FLAG = "output_hidden_states"
-# Backbones under this decorator return a filtered subset of the stages they compute, so capturing every
-# hidden state is how they work, not a leak.
-FILTERING_DECORATOR = "filter_output_hidden_states"
-
-
-FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
+CUTOFF_DATE = ""  # Set by discovery from rules.toml cutoff_date; empty means no exemption
+_DEFINITIONS = (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+# `@requires` returns a plain function wrapper, so it must wrap the function before these turn it into a descriptor.
+_DESCRIPTORS = ("classmethod", "staticmethod")
 
 
-def _own_nodes(function_node: FunctionNode) -> Iterator[ast.AST]:
-    """Every node in the function body, without descending into nested functions, lambdas or classes."""
-    stack: list[ast.AST] = list(function_node.body)
-    while stack:
-        node = stack.pop()
-        yield node
-        for child in ast.iter_child_nodes(node):
-            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
-                stack.append(child)
+def _base_requirements(tree: ast.Module, file_path: Path) -> set[str]:
+    """Static mirror of transformers.utils.import_utils.BASE_FILE_REQUIREMENTS."""
+    name = file_path.stem
+    if name.startswith(("modeling_", "generation_")):
+        return {"torch"}
+    if name.startswith("tokenization_") and name.endswith("_fast"):
+        return {"tokenizers"}
+    if name.startswith("video_processing_"):
+        return {"vision", "torch", "torchvision"}
+    if name.startswith("image_processing_"):
+        if any(
+            isinstance(node, ast.ClassDef)
+            and any(isinstance(base, ast.Name) and base.id == "TorchvisionBackend" for base in node.bases)
+            for node in tree.body
+        ):
+            return {"vision", "torch", "torchvision"}
+        return {"vision"}
+    return set()
 
 
-def _decorator_names(function_node: FunctionNode) -> set[str]:
-    names: set[str] = set()
-    for decorator in function_node.decorator_list:
-        target = decorator.func if isinstance(decorator, ast.Call) else decorator
-        if isinstance(target, ast.Attribute):
-            names.add(target.attr)
-        elif isinstance(target, ast.Name):
-            names.add(target.id)
-    return names
-
-
-def _is_true(node: ast.AST) -> bool:
-    return isinstance(node, ast.Constant) and node.value is True
-
-
-def _forced_kwargs(nodes: list[ast.AST]) -> dict[str, int]:
-    """`<name>["output_hidden_states"] = True` assignments, as dict name -> earliest line."""
-    forced: dict[str, int] = {}
-    for node in nodes:
-        if not isinstance(node, ast.Assign) or not _is_true(node.value):
+def _generated_requirements(file_path: Path) -> dict[str, set[str]]:
+    """Match modular definitions to the file requirements of their generated companions."""
+    requirements: dict[str, set[str]] = {}
+    if not file_path.name.startswith("modular_"):
+        return requirements
+    for sibling in file_path.parent.glob("*.py"):
+        head = read_file_head(sibling)
+        if head is None or GENERATED_FILE_MARKER not in head or file_path.name not in head:
             continue
-        for target in node.targets:
-            if (
-                isinstance(target, ast.Subscript)
-                and isinstance(target.value, ast.Name)
-                and isinstance(target.slice, ast.Constant)
-                and target.slice.value == FLAG
-            ):
-                name = target.value.id
-                forced[name] = min(forced.get(name, node.lineno), node.lineno)
-    return forced
+        try:
+            tree = ast.parse(sibling.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        backends = _base_requirements(tree, sibling)
+        for node in tree.body:
+            if isinstance(node, _DEFINITIONS):
+                # A helper may appear in several generated files: only their common requirements are certain.
+                requirements[node.name] = requirements.get(node.name, backends) & backends
+    return requirements
 
 
-def _full_capture_line(call: ast.Call, forced: dict[str, int]) -> int | None:
-    """The line that switches every hidden state on for `call`, or None when it does not."""
-    for keyword in call.keywords:
-        if keyword.arg == FLAG and _is_true(keyword.value):
-            return keyword.value.lineno
-        if keyword.arg is None and isinstance(keyword.value, ast.Name):
-            forced_line = forced.get(keyword.value.id)
-            if forced_line is not None and forced_line <= call.lineno:
-                return forced_line
+def _strings(node: ast.AST) -> set[str] | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, (ast.Tuple, ast.List)):
+        values = set()
+        for item in node.elts:
+            if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+                return None
+            values.add(item.value)
+        return values
     return None
 
 
-class _Uses:
-    def __init__(self) -> None:
-        self.indexed = False
-        self.whole = False
-
-
-def _parents(nodes: list[ast.AST]) -> dict[int, ast.AST]:
-    parents: dict[int, ast.AST] = {}
-    for node in nodes:
-        for child in ast.iter_child_nodes(node):
-            parents[id(child)] = node
-    return parents
-
-
-def _classify(node: ast.AST, parents: dict[int, ast.AST], uses: _Uses) -> None:
-    """Record how one reference to the hidden-states tuple is used."""
-    parent = parents.get(id(node))
-    if isinstance(parent, ast.Subscript) and parent.value is node:
-        if isinstance(parent.slice, ast.Slice):
-            uses.whole = True
-        else:
-            uses.indexed = True
-    elif isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension)) and parent.iter is node:
-        uses.whole = True
-    elif isinstance(parent, ast.Starred):
-        uses.whole = True
-    elif isinstance(parent, ast.Call) and node in parent.args and call_leaf_name(parent) != "len":
-        # torch.stack(...), torch.cat(...), zip(...), a weighted-sum helper: each consumes the whole tuple.
-        uses.whole = True
-    # Anything else -- `len(...)`, a `hidden_states=` keyword handing the tuple back in an output, a `return`,
-    # an `is None` check -- neither reads a layer nor needs all of them.
-
-
-def _hidden_states_uses(call: ast.Call, nodes: list[ast.AST], parents: dict[int, ast.AST]) -> _Uses:
-    uses = _Uses()
-
-    # `outputs = self.vision_tower(...)` -> every `outputs.hidden_states` after it.
-    result_names: set[str] = set()
-    parent = parents.get(id(call))
-    if isinstance(parent, ast.Assign) and parent.value is call:
-        result_names = {target.id for target in parent.targets if isinstance(target, ast.Name)}
-
-    tuple_refs: list[ast.AST] = []
-    for node in nodes:
-        if not isinstance(node, ast.Attribute) or node.attr != "hidden_states":
-            continue
-        if node.value is call or (
-            isinstance(node.value, ast.Name) and node.value.id in result_names and node.lineno >= call.lineno
-        ):
-            tuple_refs.append(node)
-
-    # `hidden_states = outputs.hidden_states` -> every later `hidden_states` load is the tuple too.
-    aliases: dict[str, int] = {}
-    for ref in tuple_refs:
-        ref_parent = parents.get(id(ref))
-        if isinstance(ref_parent, ast.Assign) and ref_parent.value is ref:
-            for target in ref_parent.targets:
-                if isinstance(target, ast.Name):
-                    aliases[target.id] = ref.lineno
-        else:
-            _classify(ref, parents, uses)
-    for node in nodes:
-        if (
-            isinstance(node, ast.Name)
-            and isinstance(node.ctx, ast.Load)
-            and node.id in aliases
-            and node.lineno > aliases[node.id]
-        ):
-            _classify(node, parents, uses)
-    return uses
+def _name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_name(node.value)}.{node.attr}"
+    return ""
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
-    if not file_path.name.startswith(("modeling_", "modular_")):
-        return []
+    # The cutoff only exempts the style checks: a misplaced `@requires` crashes every call, whatever the model's age.
+    exempt = is_exempt_by_cutoff(file_path, CUTOFF_DATE)
+    names = {"requires": "requires", "requires_backends": "requires_backends"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in {
+            "utils",
+            "utils.import_utils",
+            "transformers.utils",
+            "transformers.utils.import_utils",
+        }:
+            for alias in node.names:
+                names[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in {"transformers.utils", "transformers.utils.import_utils"}:
+                    prefix = alias.asname or alias.name
+                    for helper in ("requires", "requires_backends"):
+                        names[f"{prefix}.{helper}"] = helper
 
-    violations: list[Violation] = []
-    for function_node in ast.walk(tree):
-        if not isinstance(function_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if FILTERING_DECORATOR in _decorator_names(function_node):
-            continue
-        nodes = list(_own_nodes(function_node))
-        forced = _forced_kwargs(nodes)
-        parents = _parents(nodes)
-        reported: set[int] = set()
-        for call in nodes:
-            if not isinstance(call, ast.Call):
-                continue
-            line = _full_capture_line(call, forced)
-            if line is None or line in reported:
-                continue
-            uses = _hidden_states_uses(call, nodes, parents)
-            if not uses.indexed or uses.whole:
-                continue
-            if _has_rule_suppression(source_lines, RULE_ID, line):
-                continue
-            reported.add(line)
-            violations.append(
-                Violation(
-                    file_path=file_path,
-                    line_number=line,
-                    message=(
-                        f"{RULE_ID}: `{FLAG}=True` keeps every layer's hidden states alive, but "
-                        f"`{function_node.name}` only reads some of them by index. Capture just those with "
-                        "`@select_hidden_states(...)`, or pass the index as `output_hidden_states=<index>`."
-                    ),
-                )
-            )
+    base = _base_requirements(tree, file_path)
+    generated = _generated_requirements(file_path)
+    object_requirements = {
+        node: generated[node.name] for node in tree.body if isinstance(node, _DEFINITIONS) and node.name in generated
+    }
+    violations = []
+
+    def report(node: ast.expr, message: str):
+        if not _has_rule_suppression(source_lines, RULE_ID, node.lineno):
+            violations.append(Violation(file_path, node.lineno, f"{RULE_ID}: {message}"))
+
+    def decorators(node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+        result = []
+        for decorator in node.decorator_list:
+            if isinstance(decorator, ast.Call) and names.get(_name(decorator.func)) == "requires":
+                for keyword in decorator.keywords:
+                    if keyword.arg == "backends" and isinstance(keyword.value, (ast.Tuple, ast.List)):
+                        backends = _strings(keyword.value)
+                        if backends is not None:
+                            result.append((decorator, backends))
+        return result
+
+    def descriptor(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[int, str] | None:
+        for index, decorator in enumerate(node.decorator_list):
+            if isinstance(decorator, ast.Name) and decorator.id in _DESCRIPTORS:
+                return index, decorator.id
+        return None
+
+    def visit(node: ast.AST, class_backends: set[str], file_backends: set[str]):
+        if isinstance(node, _DEFINITIONS):
+            file_backends = object_requirements.get(node, file_backends)
+            declared = decorators(node)
+            available = file_backends | class_backends if not isinstance(node, ast.ClassDef) else file_backends
+            for decorator, backends in [] if exempt else declared:
+                redundant = backends & available
+                if redundant or not backends:
+                    detail = ", ".join(f"`{backend}`" for backend in sorted(redundant)) or "an empty backend list"
+                    action = (
+                        "Remove this `@requires(backends=...)` decorator."
+                        if backends <= available
+                        else f"Remove {detail} from `@requires(backends=...)`."
+                    )
+                    report(
+                        decorator,
+                        f"`{node.name}` repeats requirements already supplied by the file or class ({detail}). "
+                        f"{action}",
+                    )
+
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                wrapped_by = descriptor(node)
+                if wrapped_by is not None:
+                    index, kind = wrapped_by
+                    for decorator in node.decorator_list[:index]:
+                        if isinstance(decorator, ast.Call) and names.get(_name(decorator.func)) == "requires":
+                            report(
+                                decorator,
+                                f"`@requires` sits above `@{kind}` on `{node.name}`, so it wraps a {kind} object "
+                                f"and every call raises `TypeError`. Move it below `@{kind}`.",
+                            )
+                body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+                if not exempt and body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Call):
+                    call = body[0].value
+                    if names.get(_name(call.func)) == "requires_backends":
+                        backend_arg = (
+                            call.args[1]
+                            if len(call.args) == 2
+                            else next((kw.value for kw in call.keywords if kw.arg == "backends"), None)
+                        )
+                        if backend_arg is not None and _strings(backend_arg) is not None:
+                            report(
+                                call,
+                                f"`{node.name}` starts with `requires_backends(...)`. "
+                                "Remove it and use a `@requires(backends=...)` decorator instead"
+                                + (f", placed below `@{wrapped_by[1]}`." if wrapped_by else "."),
+                            )
+                # A nested function is not a method of the enclosing class.
+                class_backends = set()
+            else:
+                class_backends = set().union(*(backends for _, backends in declared))
+            for child in node.body:
+                visit(child, class_backends, file_backends)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, class_backends, file_backends)
+
+    visit(tree, set(), base)
     return violations

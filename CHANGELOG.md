@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `TRF066`: flags backends in `@requires` that repeat the file's implicit requirements or a method's
+  enclosing class requirements. Also flags unconditional `requires_backends(...)` checks that can be
+  replaced with a `@requires` decorator; conditional requirements keep using `requires_backends`.
+  Models contributed before the `2026-10-29` cutoff are exempt. Existing undated directories
+  `auto`, `timm_backbone`, `timm_wrapper` and `wav2vec2_with_lm` are allowlisted.
+  It also flags a `@requires` placed above `@classmethod` or `@staticmethod`, which makes every call raise
+  `TypeError`; that check ignores the cutoff.
 - `TRF060`: files in a model directory must import from transformers with relative imports
   (`from ...modeling_utils import X`), not `from transformers.modeling_utils import X` or
   `import transformers...`. Tests, `convert_*.py` scripts and files outside a transformers checkout are skipped;
@@ -40,7 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   audio processors, so there a subclass is accepted when named `<Model>ImageProcessorKwargs`,
   `<Model>VideoProcessorKwargs`/`<Model>VideoProcessorInitKwargs` or `<Model>AudioProcessorKwargs`.
   `Deprecated<Model>...Kwargs` shims are exempt. `csm`, `dia`, `pocket_tts` and `voxtral` are allowlisted.
-- `TRF066`: in `modeling_*.py` and `modular_*.py`, flags a sub-model call made with every hidden state switched
+- `TRF067`: in `modeling_*.py` and `modular_*.py`, flags a sub-model call made with every hidden state switched
   on (`output_hidden_states=True`, or `kwargs["output_hidden_states"] = True` before a `**kwargs` call) when the
   same function only reads that call's `.hidden_states[...]` by index, as `get_image_features` does with
   `vision_feature_layer`. Each forced capture keeps one activation per layer alive; for Aria in vLLM it raised peak

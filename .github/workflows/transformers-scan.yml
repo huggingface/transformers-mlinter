@@ -44,9 +44,38 @@ jobs:
           echo "TRANSFORMERS_SHA=$(cat TRANSFORMERS_SHA)" >> "$GITHUB_ENV"
           echo "TRANSFORMERS_REF=$TRANSFORMERS_REF" >> "$GITHUB_ENV"
 
+      # On a pull request, the gate is "no new violations under the default rules": scan the same
+      # transformers commit with the base branch's mlinter too, and fail on what this change adds.
+      - name: Check out mlinter base
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      # The base scan runs this change's script against the base package. If it fails (say, a rule on
+      # the base crashes and this change fixes it), the scan below reports without a gate.
+      - name: Scan with the base branch's default rules
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        working-directory: transformers
+        run: |
+          python -m venv "$RUNNER_TEMP/base-venv"
+          "$RUNNER_TEMP/base-venv/bin/python" -m pip install ../base
+          "$RUNNER_TEMP/base-venv/bin/python" ../scripts/scan_transformers.py \
+            --defaults-only "$RUNNER_TEMP/base-defaults.json"
+
       - name: Run mlinter against transformers
         working-directory: transformers
-        run: python ../scripts/scan_transformers.py --output-dir "$GITHUB_WORKSPACE"
+        run: |
+          baseline=()
+          if [ -f "$RUNNER_TEMP/base-defaults.json" ]; then
+            baseline=(--baseline "$RUNNER_TEMP/base-defaults.json")
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            echo "::warning::The base branch scan failed; reporting without the new-violation gate."
+          fi
+          python ../scripts/scan_transformers.py --output-dir "$GITHUB_WORKSPACE" "${baseline[@]}"
 
       - name: Upload scan artifacts
         if: always()

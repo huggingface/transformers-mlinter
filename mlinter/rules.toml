@@ -1158,6 +1158,7 @@ diff = '''
 +    num_crops: int
 '''
 
+
 [rules.TRF066]
 description = "Use `@requires` for unconditional backend checks and declare only requirements additional to the file or class."
 default_enabled = true
@@ -1203,4 +1204,28 @@ diff = '''
 -        outputs = self.img_processor(img_embeds, output_hidden_states=True)
 +        outputs = self.img_processor(img_embeds, output_hidden_states=self.layer_idx)
          return outputs.hidden_states[self.layer_idx]
+'''
+
+[rules.TRF068]
+description = "`_no_split_modules` must only list classes that exist in the (generated) modeling file."
+default_enabled = true
+allowlist_models = ["esm"]
+
+[rules.TRF068.explanation]
+what_it_does = """
+Checks every `_no_split_modules` assignment against the classes the modeling file defines or imports. \
+`modeling_*.py` files are checked directly. `modular_*.py` files are checked through the `modeling_*.py` \
+files they generate, and each problem is reported on the modular class so `# trf-ignore: TRFXXX` works there. \
+Note that for modular files this rule inspects the generated files on disk, so the results reflect the last converted \
+file. After editing `modular_*.py`, regenerate before running the linter, otherwise a fix will not show up and \
+a new breakage will not be caught."""
+why_bad = """
+accelerate matches `_no_split_modules` against the class names of the model's submodules. A name that is \
+not a class never matches, so the layer is silently split across devices. In modular files this happens \
+when `_no_split_modules` is inherited from another model: the converter renames the prefix but not the \
+class (`Qwen4ExpDecoderLayer` vs. the real `Qwen4ExpTextDecoderLayer`)."""
+diff = '''
+ class Qwen4ExpModel(Qwen3_5MoeModel):
+-    # inherits ["Qwen3_5MoeDecoderLayer"] -> converted to "Qwen4ExpDecoderLayer", which does not exist
++    _no_split_modules = ["Qwen4ExpTextDecoderLayer"]
 '''

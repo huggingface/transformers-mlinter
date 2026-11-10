@@ -16,6 +16,7 @@
 
 import ast
 import difflib
+import re
 from pathlib import Path
 
 from ._helpers import GENERATED_FILE_MARKER, Violation, _has_rule_suppression, read_file_head
@@ -105,6 +106,15 @@ def _generated_trees(modular_path: Path) -> dict[Path, ast.Module]:
     return trees
 
 
+def _first_mention(source_lines: list[str], name: str) -> int:
+    """1-based line of the first whole-word occurrence of `name`, or 1 when the file never names it."""
+    pattern = re.compile(rf"\b{re.escape(name)}\b")
+    for lineno, text in enumerate(source_lines, start=1):
+        if pattern.search(text):
+            return lineno
+    return 1
+
+
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     file_name = file_path.name
     violations: list[Violation] = []
@@ -118,7 +128,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                     file_path=file_path,
                     line_number=line,
                     message=(
-                        f"{cls}._no_split_modules lists `{name}`, which is not a class in {file_path.name}, so accelerate "
+                        f"{RULE_ID}: {cls}._no_split_modules lists `{name}`, which is not a class in {file_path.name}, so accelerate "
                         f"will never match it.{hints}"
                     ),
                 )
@@ -130,10 +140,12 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
             for cls, _, name, hints in _bad_entries(generated_tree):
                 node = modular_classes.get(cls)
                 if node is None:
-                    # class pulled in by the converter without being defined here
-                    continue
-                own = [s for c, s, _ in _attr_assignments(node) if c is node]
-                line = own[0].lineno if own else node.lineno
+                    # The converter pulled the class in from another model without it being defined here.
+                    # Report it on the first line naming it (usually `__all__`), where a suppression can go.
+                    line = _first_mention(source_lines, cls)
+                else:
+                    own = [s for c, s, _ in _attr_assignments(node) if c is node]
+                    line = own[0].lineno if own else node.lineno
                 if _has_rule_suppression(source_lines, RULE_ID, line):
                     continue
                 hints = f" Did you mean one of these: {', '.join(hints)}?" if hints else ""
@@ -142,7 +154,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                         file_path=file_path,
                         line_number=line,
                         message=(
-                            f"{cls}._no_split_modules lists `{name}`, which is not a class in "
+                            f"{RULE_ID}: {cls}._no_split_modules lists `{name}`, which is not a class in "
                             f"{generated_path.name} generated from {file_path.name}, "
                             f"so accelerate will never match it.{hints}"
                         ),

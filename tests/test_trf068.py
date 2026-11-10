@@ -49,6 +49,7 @@ class FooPreTrainedModel(PreTrainedModel):
         self.assertIn("FooPreTrainedModel", trf068[0].message)
         self.assertIn("`FooDecoderLayer`", trf068[0].message)
         self.assertIn("FooTextDecoderLayer", trf068[0].message)  # suggestion
+        self.assertTrue(trf068[0].message.startswith("TRF068: "))
 
     def test_trf068_flags_each_missing_class(self):
         source = """
@@ -200,4 +201,44 @@ class FooModel(BarModel):
 class FooModel(FooPreTrainedModel):
     _no_split_modules = ["Missing"]
 """
+        self.assertEqual(self._trf068_modular(modular, generated), [])
+
+    def test_trf068_modular_reports_class_pulled_in_by_the_converter(self):
+        # maskformer: the converter copies `FooPreTrainedModel` from another model, so the modular file only
+        # names it in `__all__`. The violation goes on that line instead of being dropped.
+        modular = """
+class FooModel(BarModel):
+    pass
+
+__all__ = [
+    "FooModel",
+    "FooPreTrainedModel",  # noqa F821
+]
+"""
+        generated = (
+            self.GENERATED_HEADER
+            + """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooEncoderLayer"]
+
+class FooModel(FooPreTrainedModel):
+    pass
+"""
+        )
+        trf068 = self._trf068_modular(modular, generated)
+        self.assertEqual(len(trf068), 1)
+        self.assertEqual(trf068[0].line_number, 7)
+        self.assertTrue(trf068[0].message.startswith("TRF068: FooPreTrainedModel._no_split_modules"))
+
+    def test_trf068_modular_class_pulled_in_by_the_converter_can_be_suppressed(self):
+        modular = """
+__all__ = ["FooPreTrainedModel"]  # trf-ignore: TRF068
+"""
+        generated = (
+            self.GENERATED_HEADER
+            + """
+class FooPreTrainedModel(PreTrainedModel):
+    _no_split_modules = ["FooEncoderLayer"]
+"""
+        )
         self.assertEqual(self._trf068_modular(modular, generated), [])

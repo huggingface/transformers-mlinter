@@ -11,193 +11,388 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import tempfile
 
-from tests.rule_test_utils import Path, RuleTestCase, mlinter
+
+from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF067Test(RuleTestCase):
-    # --- trf067: `_no_split_modules` must only list classes that exist ---
+    # --- TRF067: don't capture every hidden state to read only some of them ---
 
-    def _trf067(self, source: str, file_name: str = "modeling_foo.py") -> list:
-        file_path = Path(f"src/transformers/models/foo/{file_name}")
-        violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF067})
-        return [v for v in violations if v.rule_id == mlinter.TRF067]
-
-    def _trf067_modular(self, modular_source: str, generated_source: str | None, generated_name="modeling_foo.py"):
-        # Modular files are checked through the modeling file they generate, which is read from disk.
-        with tempfile.TemporaryDirectory() as tmp:
-            if generated_source is not None:
-                (Path(tmp) / generated_name).write_text(generated_source, encoding="utf-8")
-            violations = mlinter.analyze_file(
-                Path(tmp) / "modular_foo.py", modular_source, enabled_rules={mlinter.TRF067}
-            )
-        return [v for v in violations if v.rule_id == mlinter.TRF067]
-
-    GENERATED_HEADER = "# This file was automatically generated from src/transformers/models/foo/modular_foo.py.\n"
-
-    def test_trf067_flags_missing_class(self):
+    def test_trf067_flags_forced_kwargs_with_single_index(self):
         source = """
-class FooTextDecoderLayer(nn.Module):
-    pass
-
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooDecoderLayer"]
-"""
-        trf067 = self._trf067(source)
-        self.assertEqual(len(trf067), 1)
-        self.assertIn("FooPreTrainedModel", trf067[0].message)
-        self.assertIn("`FooDecoderLayer`", trf067[0].message)
-        self.assertIn("FooTextDecoderLayer", trf067[0].message)  # suggestion
-
-    def test_trf067_flags_each_missing_class(self):
-        source = """
-class FooLayer(nn.Module):
-    pass
-
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooLayer", "MissingA", "MissingB"]
-"""
-        self.assertEqual(len(self._trf067(source)), 2)
-
-    def test_trf067_flags_annotated_assignment(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules: list[str] = ["Missing"]
-"""
-        self.assertEqual(len(self._trf067(source)), 1)
-
-    def test_trf067_allows_existing_classes(self):
-        source = """
-class FooDecoderLayer(nn.Module):
-    pass
-
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooDecoderLayer"]
-"""
-        self.assertEqual(self._trf067(source), [])
-
-    def test_trf067_allows_imported_classes(self):
-        source = """
-from ..clip.modeling_clip import CLIPEncoderLayer
-
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["CLIPEncoderLayer"]
-"""
-        self.assertEqual(self._trf067(source), [])
-
-    def test_trf067_allows_torch_parametrized_classes(self):
-        # torch.nn.utils.parametrize creates `Parametrized<Name>` classes at runtime.
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["ParametrizedConv1d"]
-"""
-        self.assertEqual(self._trf067(source), [])
-
-    def test_trf067_skips_non_literal_values(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = ["FooLayer"]
-
 class FooModel(FooPreTrainedModel):
-    _no_split_modules = FooPreTrainedModel._no_split_modules
+    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
+        kwargs["output_hidden_states"] = True
+        image_outputs = self.vision_tower(pixel_values, return_dict=True, **kwargs)
+        selected_image_feature = image_outputs.hidden_states[vision_feature_layer]
+        return self.multi_modal_projector(selected_image_feature)
 """
-        # FooLayer is missing in FooPreTrainedModel, but FooModel's non-literal value is not reported again.
-        self.assertEqual(len(self._trf067(source)), 1)
+        violations = self._run(mlinter.TRF067, source)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line_number, 4)
+        self.assertIn("get_image_features", violations[0].message)
+        self.assertIn("select_hidden_states", violations[0].message)
 
-    def test_trf067_allows_none_declaration(self):
+    def test_trf067_flags_comprehension_over_feature_layers(self):
         source = """
-class FooPreTrainedModel(PreTrainedModel):
-    _no_split_modules = None
-"""
-        self.assertEqual(self._trf067(source), [])
-
-    def test_trf067_skips_non_modeling_files(self):
-        source = """
-class FooConfig(PreTrainedConfig):
-    _no_split_modules = ["Missing"]
-"""
-        self.assertEqual(self._trf067(source, file_name="configuration_foo.py"), [])
-
-    def test_trf067_respects_suppression_comment(self):
-        source = """
-class FooPreTrainedModel(PreTrainedModel):
-    # trf-ignore: TRF067
-    _no_split_modules = ["TimmWrapperForImageClassification"]
-"""
-        self.assertEqual(self._trf067(source), [])
-
-    def test_trf067_modular_checks_generated_file(self):
-        # The modular class inherits `_no_split_modules`; the converter renames the prefix to a class that
-        # does not exist in the generated file.
-        modular = """
-class FooTextDecoderLayer(BarDecoderLayer):
-    pass
-
-class FooModel(BarModel):
-    pass
-"""
-        generated = (
-            self.GENERATED_HEADER
-            + """
-class FooTextDecoderLayer(nn.Module):
-    pass
-
 class FooModel(FooPreTrainedModel):
-    _no_split_modules = ["FooDecoderLayer"]
+    def get_image_features(self, pixel_values, **kwargs):
+        kwargs["output_hidden_states"] = True
+        image_outputs = self.vision_tower(pixel_values, **kwargs)
+        hs_pool = [image_outputs.hidden_states[layer_idx] for layer_idx in self.config.vision_feature_layer]
+        return torch.cat(hs_pool, dim=-1)
 """
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_flags_keyword_flag_and_alias(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_img_features(self, img_embeds, attention_mask):
+        img_processor_output = self.img_processor(
+            img_embeds, patch_attention_mask=attention_mask, output_hidden_states=True
         )
-        trf067 = self._trf067_modular(modular, generated)
-        self.assertEqual(len(trf067), 1)
-        self.assertIn("FooModel", trf067[0].message)
-        self.assertIn("`FooDecoderLayer`", trf067[0].message)
-        self.assertIn("FooTextDecoderLayer", trf067[0].message)
-
-    def test_trf067_modular_allows_valid_generated_file(self):
-        modular = """
-class FooModel(BarModel):
-    pass
+        hidden_states = img_processor_output.hidden_states
+        return hidden_states[self.layer_idx]
 """
-        generated = (
-            self.GENERATED_HEADER
-            + """
-class FooTextDecoderLayer(nn.Module):
-    pass
+        violations = self._run(mlinter.TRF067, source)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line_number, 5)
 
+    def test_trf067_flags_chained_read_on_the_call(self):
+        source = """
 class FooModel(FooPreTrainedModel):
-    _no_split_modules = ["FooTextDecoderLayer"]
+    def get_image_features(self, pixel_values):
+        return self.vision_model(pixel_values, output_hidden_states=True).hidden_states[-2]
 """
-        )
-        self.assertEqual(self._trf067_modular(modular, generated), [])
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
 
-    def test_trf067_modular_reports_on_modular_class_so_it_can_be_suppressed(self):
-        modular = """
-class FooModel(BarModel):  # trf-ignore: TRF067
-    pass
-"""
-        generated = (
-            self.GENERATED_HEADER
-            + """
-class FooModel(FooPreTrainedModel):  # trf-ignore: TRF067
-    _no_split_modules = ["Missing"]
-"""
-        )
-        self.assertEqual(self._trf067_modular(modular, generated), [])
+    def test_trf067_flags_modular_file_with_imported_base(self):
+        # The rule reads only the function's own body, so an imported base class changes nothing.
+        source = """
+from ..llava.modeling_llava import LlavaModel
 
-    def test_trf067_modular_without_generated_file_is_skipped(self):
-        modular = """
-class FooModel(BarModel):
-    pass
-"""
-        self.assertEqual(self._trf067_modular(modular, None), [])
 
-    def test_trf067_modular_ignores_files_generated_from_another_modular(self):
-        modular = """
-class FooModel(BarModel):
-    pass
+class FooModel(LlavaModel):
+    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
+        kwargs["output_hidden_states"] = True
+        image_outputs = self.vision_tower(pixel_values, **kwargs)
+        return image_outputs.hidden_states[vision_feature_layer]
 """
-        generated = """# This file was automatically generated from src/transformers/models/foo/modular_other.py.
+        self.assertEqual(len(self._run(mlinter.TRF067, source, file_name="modular_foo.py")), 1)
+
+    def test_trf067_allows_select_hidden_states_decorator(self):
+        source = """
 class FooModel(FooPreTrainedModel):
-    _no_split_modules = ["Missing"]
+    @merge_with_config_defaults
+    @can_return_tuple
+    @select_hidden_states("vision_feature_layer")
+    @auto_docstring
+    def get_image_features(self, pixel_values, vision_feature_layer=None, **kwargs):
+        image_outputs = self.vision_tower(pixel_values, return_dict=True, **kwargs)
+        return image_outputs.hidden_states[vision_feature_layer]
+
+    @select_hidden_states(lambda self: [i + 1 for i in self.extract_layers])
+    def forward(self, pixel_values, **kwargs):
+        outputs = self.clip.get_image_features(pixel_values, **kwargs)
+        return [outputs.hidden_states[i + 1] for i in self.extract_layers]
 """
-        self.assertEqual(self._trf067_modular(modular, generated), [])
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_allows_selecting_by_index(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_img_features(self, img_embeds):
+        outputs = self.img_processor(img_embeds, output_hidden_states=self.layer_idx)
+        return outputs.hidden_states[self.layer_idx]
+
+    def get_text_features(self, input_ids, **kwargs):
+        kwargs["output_hidden_states"] = kwargs.get("output_hidden_states") or -1
+        text_outputs = self.text_model(input_ids, **kwargs)
+        return text_outputs.hidden_states[-1][:, 0]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_allows_stacking_the_whole_tuple(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, input_values):
+        outputs = self.semantic_model(input_values, output_hidden_states=True)
+        hidden_states = outputs.hidden_states
+        stacked = torch.stack([h for h in hidden_states], dim=1)
+        return stacked.mean(dim=1), hidden_states[-1]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_allows_slicing_or_passing_the_tuple_on(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, pixel_values):
+        outputs = self.encoder(pixel_values, output_hidden_states=True)
+        return self.decoder(outputs.hidden_states)
+
+    def other(self, pixel_values):
+        outputs = self.encoder(pixel_values, output_hidden_states=True)
+        return [h[0] for h in outputs.hidden_states[1:]]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_allows_filter_output_hidden_states_backbones(self):
+        source = """
+class FooBackbone(FooPreTrainedModel, BackboneMixin):
+    @can_return_tuple
+    @filter_output_hidden_states
+    def forward(self, pixel_values):
+        outputs = self.foo(pixel_values, output_hidden_states=True, return_dict=True)
+        hidden_states = outputs.hidden_states
+        feature_maps = ()
+        for idx, stage in enumerate(self.stage_names):
+            if stage in self.out_features:
+                feature_maps += (hidden_states[idx],)
+        return BackboneOutput(feature_maps=feature_maps)
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_ignores_unrelated_hidden_states_local(self):
+        # `hidden_states` is assigned before the forced call and never aliases its output tuple.
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, pixel_values, **kwargs):
+        hidden_states = self.embeddings(pixel_values)
+        first = hidden_states[0]
+        kwargs["output_hidden_states"] = True
+        outputs = self.encoder(first, **kwargs)
+        return self.head(outputs.hidden_states)
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_ignores_kwargs_forced_after_the_call(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, pixel_values, **kwargs):
+        outputs = self.encoder(pixel_values, **kwargs)
+        kwargs["output_hidden_states"] = True
+        return outputs.hidden_states[-1]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_ignores_configuration_files(self):
+        source = """
+def helper(model, x):
+    return model(x, output_hidden_states=True).hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source, file_name="configuration_foo.py"), [])
+
+    def test_trf067_suppression(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_image_features(self, pixel_values, **kwargs):
+        # trf-ignore: TRF067
+        kwargs["output_hidden_states"] = True
+        image_outputs = self.vision_tower(pixel_values, **kwargs)
+        return image_outputs.hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    # --- Regressions from review on huggingface/transformers-mlinter#85 ---
+
+    def test_trf067_alias_stops_at_rebind(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+        hidden_states = outputs.hidden_states
+        hidden_states = hidden_states[-2]
+        hidden_states = self.proj(hidden_states)
+        return hidden_states
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_result_name_stops_at_rebind(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+        first = outputs.hidden_states[-2]
+        outputs = self.other(x, output_hidden_states=True)
+        return first, torch.stack(outputs.hidden_states)
+"""
+        violations = self._run(mlinter.TRF067, source)
+        self.assertEqual([violation.line_number for violation in violations], [4])
+
+    def test_trf067_flags_annotated_result(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs: BaseModelOutput = self.enc(x, output_hidden_states=True)
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_flags_kwargs_update_and_setdefault(self):
+        for force in ("kwargs.update(output_hidden_states=True)", 'kwargs.setdefault("output_hidden_states", True)'):
+            with self.subTest(force=force):
+                source = f"""
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        {force}
+        outputs = self.enc(x, **kwargs)
+        return outputs.hidden_states[-2]
+"""
+                self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_ignores_forced_kwargs_reset_before_the_call(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        kwargs["output_hidden_states"] = True
+        kwargs["output_hidden_states"] = False
+        outputs = self.enc(x, **kwargs)
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_ignores_kwargs_forced_in_another_branch(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        if self.training:
+            kwargs["output_hidden_states"] = True
+            return self.loss(x, **kwargs)
+        outputs = self.enc(x, **kwargs)
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_flags_kwargs_forced_inside_an_enclosing_block(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        with torch.no_grad():
+            kwargs["output_hidden_states"] = True
+            outputs = self.enc(x, **kwargs)
+        return [outputs.hidden_states[i + 1] for i in self.extract_layers]
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_allows_handing_the_tuple_on(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+        feat = outputs.hidden_states[-2]
+        return FooOutput(last=feat, hidden_states=outputs.hidden_states)
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_still_flags_returning_the_whole_output(self):
+        # The tuple itself isn't handed on, only the output holding it: that's the get_image_features pattern.
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
+        kwargs["output_hidden_states"] = True
+        image_outputs = self.vision_tower(pixel_values, **kwargs)
+        image_outputs.pooler_output = self.projector(image_outputs.hidden_states[vision_feature_layer])
+        return image_outputs
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_allows_keyword_consumers(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+        last = outputs.hidden_states[-1]
+        return last, self.weighted_sum(hidden_states=outputs.hidden_states)
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_allows_indexing_every_position(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        hs = self.enc(x, output_hidden_states=True).hidden_states
+        out = ()
+        for i in range(len(hs)):
+            out += (hs[i],)
+        return out
+
+    def stages(self, x):
+        hs = self.enc(x, output_hidden_states=True).hidden_states
+        return [hs[idx] for idx, stage in enumerate(self.stage_names)]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_suppression_above_a_multiline_call(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        # trf-ignore: TRF067
+        outputs = self.enc(
+            x,
+            output_hidden_states=True,
+        )
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_shared_forced_kwargs_need_every_call_to_index(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        kwargs["output_hidden_states"] = True
+        selected = self.enc(x, **kwargs).hidden_states[-2]
+        stacked = torch.stack(self.other(x, **kwargs).hidden_states)
+        return selected, stacked
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_flags_kwargs_forced_under_a_condition(self):
+        # internvl, qianfan_ocr: the force only happens on one path, but on that path it leaks.
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
+        if vision_feature_layer != -1:
+            kwargs["output_hidden_states"] = True
+        vision_outputs = self.vision_tower(pixel_values=pixel_values, **kwargs)
+        if vision_feature_layer == -1:
+            return vision_outputs.last_hidden_state
+        return vision_outputs.hidden_states[vision_feature_layer]
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_follows_kwargs_rebuilt_from_themselves(self):
+        # mistral3: dropping `None` values keeps the forced flag.
+        source = """
+class FooModel(FooPreTrainedModel):
+    def get_image_features(self, pixel_values, vision_feature_layer, **kwargs):
+        kwargs["output_hidden_states"] = True
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        image_outputs = self.vision_tower(pixel_values, **kwargs)
+        return image_outputs.hidden_states[vision_feature_layer]
+"""
+        self.assertEqual(len(self._run(mlinter.TRF067, source)), 1)
+
+    def test_trf067_ignores_kwargs_replaced_by_a_fresh_dict(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x, **kwargs):
+        kwargs["output_hidden_states"] = True
+        kwargs = {"return_dict": True}
+        outputs = self.enc(x, **kwargs)
+        return outputs.hidden_states[-2]
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])
+
+    def test_trf067_ignores_reads_in_a_nested_function(self):
+        source = """
+class FooModel(FooPreTrainedModel):
+    def forward(self, x):
+        outputs = self.enc(x, output_hidden_states=True)
+
+        def pick(outputs):
+            return outputs.hidden_states[-2]
+
+        return pick(outputs)
+"""
+        self.assertEqual(self._run(mlinter.TRF067, source), [])

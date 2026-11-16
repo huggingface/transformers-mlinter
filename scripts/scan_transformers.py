@@ -19,17 +19,26 @@ Invoked from the root of a transformers checkout. The CWD must contain
 ``src/transformers/models``. Outputs go to ``<output-dir>``, which defaults to
 the parent of CWD (i.e. the GitHub Actions workspace when this is run from a
 nested ``transformers/`` clone).
+
+The report covers every rule, but only the default-enabled ones, after their
+allowlists, are what Transformers sees when it adopts this version. Those are
+the gate: ``--defaults-only`` writes them as JSON (run it with the base
+branch's mlinter installed), and ``--baseline`` fails the scan on any that the
+base run did not have. The two runs must scan the same transformers commit.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import TypedDict
 
 from mlinter import (
+    DEFAULT_ENABLED_TRF_RULES,
     TRF_RULE_SPECS,
     TRF_RULES,
     Violation,
@@ -55,6 +64,54 @@ def _collect(enabled: set[str]) -> tuple[list[Path], list[Violation]]:
             continue
         violations.extend(analyze_file(path, text, enabled_rules=enabled))
     return files, violations
+
+
+class Finding(TypedDict):
+    rule_id: str
+    path: str
+    line: int
+    message: str
+
+
+def _default_findings(violations: list[Violation]) -> list[Finding]:
+    """The violations Transformers would see on adopting this version, as sortable records."""
+    records = [
+        Finding(rule_id=rule_id, path=str(v.file_path), line=v.line_number, message=v.message)
+        for v in violations
+        if (rule_id := v.rule_id or _rule_id_from_message(v.message)) in DEFAULT_ENABLED_TRF_RULES
+    ]
+    return sorted(records, key=lambda r: (r["path"], r["line"], r["rule_id"]))
+
+
+def _finding_key(record: Finding) -> tuple[str, str, int]:
+    # Both runs scan the same transformers commit, so a line number identifies the finding. The message
+    # is left out: rewording a rule's message must not count as a new violation.
+    return record["rule_id"], record["path"], record["line"]
+
+
+def _new_findings(current: list[Finding], baseline: list[Finding]) -> list[Finding]:
+    known = {_finding_key(record) for record in baseline}
+    return [record for record in current if _finding_key(record) not in known]
+
+
+def _render_gate(new: list[Finding], current_count: int, baseline_count: int) -> str:
+    lines = ["## Gate: new violations under the default rules", ""]
+    lines.append(
+        f"Default-enabled rules, after allowlists: **{baseline_count}** on the base branch, "
+        f"**{current_count}** with this change, **{len(new)}** new."
+    )
+    lines.append("")
+    if not new:
+        lines.append("No new violations. Transformers can adopt this change without new failures.")
+        return "\n".join(lines) + "\n"
+    lines.append(
+        "Transformers' quality check would fail on these once it adopts this version. Fix the rule, or, "
+        "if the existing code is acceptable, add the model to the rule's `allowlist_models` in `rules.toml`."
+    )
+    lines.append("")
+    for record in new:
+        lines.append(f"- `{record['path']}:{record['line']}` — {record['message']}")
+    return "\n".join(lines) + "\n"
 
 
 def _render_report(
@@ -134,21 +191,47 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=os.environ.get("TRANSFORMERS_REF"),
         help="Git ref of the scanned transformers checkout (for the report).",
     )
+    parser.add_argument(
+        "--defaults-only",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Only write the default-enabled rules' violations to PATH as JSON; no report.",
+    )
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="JSON from a --defaults-only run on the base branch; exit 1 on any default-rule violation it lacks.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    output_dir = (args.output_dir or Path.cwd().parent).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     enabled = set(TRF_RULES)
     print(f"Scanning with {len(enabled)} TRF rule(s)...", file=sys.stderr)
 
     files, violations = _collect(enabled)
     print(f"Discovered {len(files)} file(s); {len(violations)} violation(s).", file=sys.stderr)
+    defaults = _default_findings(violations)
+
+    if args.defaults_only is not None:
+        args.defaults_only.write_text(json.dumps(defaults, indent=1) + "\n", encoding="utf-8")
+        print(f"Wrote {len(defaults)} default-rule violation(s) to {args.defaults_only}.", file=sys.stderr)
+        return 0
+
+    output_dir = (args.output_dir or Path.cwd().parent).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     report = _render_report(files, violations, enabled, args.transformers_sha, args.transformers_ref)
+    new: list[Finding] = []
+    if args.baseline is not None:
+        baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+        new = _new_findings(defaults, baseline)
+        report = _render_gate(new, len(defaults), len(baseline)) + "\n" + report
 
     (output_dir / "scan-report.md").write_text(report, encoding="utf-8")
     with (output_dir / "scan-violations.txt").open("w", encoding="utf-8") as f:
@@ -161,6 +244,9 @@ def main(argv: list[str] | None = None) -> int:
             f.write(report)
 
     sys.stdout.write(report)
+    if new:
+        print(f"{len(new)} new default-rule violation(s); see the Gate section above.", file=sys.stderr)
+        return 1
     return 0
 
 

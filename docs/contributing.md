@@ -68,6 +68,12 @@ Registration is automatic from there: rule modules are discovered by filename, a
 validation fails if a module has no TOML entry or a TOML entry has no module. There is no registry list
 to update.
 
+On a pull request, the `Run all rules against huggingface/transformers` check scans Transformers `main`
+with your branch and with the base branch, and fails on any violation of a default-enabled rule that
+the base did not have: those are what Transformers would hit when it adopts the release. Fix the rule,
+or allowlist the models whose code is acceptable. The scan report also lists every rule's findings,
+default-disabled ones included, for information.
+
 ## Constraints on a rule
 
 - **Static analysis only.** Use Python's `ast` module. A rule must never import the model, download

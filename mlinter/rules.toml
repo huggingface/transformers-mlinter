@@ -1219,3 +1219,27 @@ diff = '''
 -    # inherits ["Qwen3_5MoeDecoderLayer"] -> converted to "Qwen4ExpDecoderLayer", which does not exist
 +    _no_split_modules = ["Qwen4ExpTextDecoderLayer"]
 '''
+
+[rules.TRF069]
+description = "`_get_num_multimodal_tokens` must read its `**kwargs` through `self._merge_kwargs`."
+default_enabled = true
+# qwen3_omni_moe moves a flat `n_window` into `audio_kwargs`, where its `__call__` reads it, before handing every
+# kwarg to the parent counter.
+allowlist_models = ["qwen3_omni_moe"]
+
+[rules.TRF069.explanation]
+what_it_does = "In processing_*.py and modular_*.py, flags every use of a `_get_num_multimodal_tokens` method's `**kwargs` other than unpacking it into `self._merge_kwargs(...)` or `super()._get_num_multimodal_tokens(...)`: reading it with `kwargs.get(...)` or `kwargs[...]`, handing it to a helper such as `get_number_of_image_patches`, or reassigning it. A counter that never uses its `**kwargs` is not flagged."
+why_bad = "The counter takes the processor kwargs a caller would pass to the processor call, flat (`size=...`) or nested (`images_kwargs={\"size\": ...}`), and must return the token count that call would produce. The processor call sorts both forms into per-modality dicts with `_merge_kwargs`, so a counter that reads the raw kwargs ignores nested kwargs and the processor's own defaults, and returns a count the call does not produce. vLLM sizes its multimodal token budget and rejects prompts above `max_model_len` with this count, so a wrong count wastes memory or rejects valid prompts. `_merge_kwargs` only holds the kwargs that were passed and the processor defaults, in the format they were passed: to read an image or video processor kwarg such as `size` or `merge_size` yourself, pass the merged dict through the sub-processor's `_merge_and_standardize_kwargs` to fill in its attributes and standardize them. Sub-processor helpers such as `get_number_of_image_patches` already do this, so the merged dict can be passed to them as is."
+diff = '''
+ def _get_num_multimodal_tokens(self, image_sizes=None, **kwargs):
+-    merge_size = kwargs.get("merge_size") or self.image_processor.merge_size
++    images_kwargs = self.image_processor._merge_and_standardize_kwargs(
++        **self._merge_kwargs(**kwargs)["images_kwargs"]
++    )
++    merge_size = images_kwargs["merge_size"]
+     num_image_patches = [
+-        self.image_processor.get_number_of_image_patches(height, width, kwargs)
++        self.image_processor.get_number_of_image_patches(height, width, images_kwargs)
+         for height, width in image_sizes
+     ]
+'''

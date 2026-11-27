@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `TRF069`: `_get_num_multimodal_tokens` must read its `**kwargs` through `self._merge_kwargs`.
+
 ## [0.1.6] - 2026-11-10
 
 ### Added

@@ -1223,9 +1223,9 @@ diff = '''
 [rules.TRF069]
 description = "`_get_num_multimodal_tokens` must read its `**kwargs` through `self._merge_kwargs`."
 default_enabled = true
-# hy_v4_vl merges flat and nested kwargs by hand and should move to `_merge_kwargs`. qwen3_omni_moe moves a
-# deprecated flat `n_window` into `audio_kwargs` before handing every kwarg to the parent counter.
-allowlist_models = ["hy_v4_vl", "qwen3_omni_moe"]
+# qwen3_omni_moe moves a flat `n_window` into `audio_kwargs`, where its `__call__` reads it, before handing every
+# kwarg to the parent counter.
+allowlist_models = ["qwen3_omni_moe"]
 
 [rules.TRF069.explanation]
 what_it_does = "In processing_*.py and modular_*.py, flags every use of a `_get_num_multimodal_tokens` method's `**kwargs` other than unpacking it into `self._merge_kwargs(...)` or `super()._get_num_multimodal_tokens(...)`: reading it with `kwargs.get(...)` or `kwargs[...]`, handing it to a helper such as `get_number_of_image_patches`, or reassigning it. A counter that never uses its `**kwargs` is not flagged."
